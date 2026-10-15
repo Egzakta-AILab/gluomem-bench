@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 from gluomem.embedding.providers import MockEmbedder
-from gluomem.search.multilingual import canonical_terms
+from gluomem.search.multilingual import fold_to_ascii
 
 from gluomem_bench.bench.replay import (
     ReplayRunner,
@@ -119,13 +119,13 @@ def test_sr_en_translation_fixture_has_zero_lexical_overlap() -> None:
                 has_latin_sr_query = True
             else:
                 has_english_query = True
-            q_can = set(canonical_terms(p.question))
+            q_can = set(fold_to_ascii(p.question).split())
             q_norm = set(normalize(p.question))
-            assert q_can, f"empty canonical_terms for {p.probe_id}"
+            assert q_can, f"empty folded terms for {p.probe_id}"
             assert q_norm, f"empty normalize for {p.probe_id}"
             for e in h.events:
-                assert not (q_can & set(canonical_terms(e.text))), (
-                    f"{p.probe_id} shares canonical terms with {e.event_id}"
+                assert not (q_can & set(fold_to_ascii(e.text).split())), (
+                    f"{p.probe_id} shares folded terms with {e.event_id}"
                 )
                 assert not (q_norm & set(normalize(e.text))), (
                     f"{p.probe_id} shares normalized terms with {e.event_id}"
