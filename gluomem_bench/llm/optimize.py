@@ -44,6 +44,8 @@ from gluomem_bench.llm.extraction_eval import (
     SealedSplitError,
     load_fixture,
     score_case,
+    score_consolidation_case,
+    score_event_claims_case,
 )
 from gluomem_bench.llm.signatures import TASK_SIGNATURES
 
@@ -51,7 +53,11 @@ from gluomem_bench.llm.signatures import TASK_SIGNATURES
 TeleprompterFactory = Callable[[Callable], Any]
 
 # Task -> the output field the source-backed evaluator scores.
-EXTRACTION_TASKS = {"fact_extraction": "facts", "event_extraction": "events"}
+EXTRACTION_TASKS = {
+    "fact_extraction": "facts",
+    "event_extraction": "events",
+    "event_claims": "claims",
+}
 
 
 def load_trainset(path: str | Path, task: str) -> list[dspy.Example]:
@@ -95,6 +101,15 @@ def fixture_examples(
         raise SealedSplitError(f"{SEALED_SPLIT} cases never become optimizer examples")
     fixture = fixture or load_fixture()
     input_fields = list(TASK_SIGNATURES[task].input_fields)
+    if task == "event_claims":
+        return [
+            dspy.Example(
+                source_text=case.source,
+                reference_date=case.reference_date or "",
+                case_id=case.case_id,
+            ).with_inputs(*input_fields)
+            for case in fixture.select(splits=splits)
+        ]
     return [
         dspy.Example(**case.inputs(), case_id=case.case_id).with_inputs(*input_fields)
         for case in fixture.select(task=task, splits=splits)
@@ -112,32 +127,91 @@ def check_trainset(task: str, examples: Sequence[dspy.Example]) -> None:
     sealed = {c.case_id for c in fixture.select(splits=(SEALED_SPLIT,))}
     for i, ex in enumerate(examples):
         case_id = ex.get("case_id")
-        if case_id in sealed:
+        if case_id in sealed or ex.get("split") == SEALED_SPLIT:
             raise SealedSplitError(f"example {i}: case {case_id!r} is in {SEALED_SPLIT}")
-        if task not in EXTRACTION_TASKS:
-            continue
-        if case_id is None:
-            raise ValueError(
-                f"example {i}: '{task}' examples need a case_id from the annotated "
-                f"extraction fixture; unannotated gold cannot score source support"
-            )
-        case = fixture.case(case_id)
-        if case.task != task:
-            raise ValueError(f"example {i}: case {case_id!r} is a '{case.task}' case")
+        if task in ("fact_extraction", "event_extraction"):
+            if case_id is None:
+                raise ValueError(
+                    f"example {i}: '{task}' examples need a case_id from the annotated "
+                    f"extraction fixture; unannotated gold cannot score source support"
+                )
+            case = fixture.case(case_id)
+            if case.task != task:
+                raise ValueError(f"example {i}: case {case_id!r} is a '{case.task}' case")
+        elif task == "event_claims":
+            if case_id is not None:
+                fixture.case(case_id)
+            elif ex.get("claims") is None:
+                raise ValueError(
+                    f"example {i}: 'event_claims' examples need a fixture "
+                    "case_id or annotated claims"
+                )
+        elif task == "consolidate":
+            if (
+                ex.get("decision") is None
+                and ex.get("action") is None
+                and ex.get("expected_action") is None
+            ):
+                raise ValueError(
+                    f"example {i}: 'consolidate' examples need a gold decision or expected_action"
+                )
 
 
 def metric_for(task: str, fixture: Fixture | None = None) -> Callable:
     """Optimizer metric for ``task``.
 
-    Fact and event extraction use the frozen source-backed evaluator
-    (``extraction_eval``). Called MIPROv2-style ``(gold, pred, trace)`` it
+    Fact, event, and unified event_claims extraction use the frozen source-backed
+    evaluator (``extraction_eval``), and consolidation uses
+    ``score_consolidation_case``. Called MIPROv2-style ``(gold, pred, trace)`` it
     returns the scalar; called GEPA-style with ``pred_name`` it returns
     ``dspy.Prediction(score=..., feedback=...)``. Other tasks keep the
     structural parse-or-exact-match metric.
     """
+    if task == "event_claims":
+        return _event_claims_metric(fixture)
+    if task == "consolidate":
+        return _consolidation_metric()
     if task in EXTRACTION_TASKS:
         return _evidence_metric(task, fixture)
     return _structural_metric(task)
+
+
+def _event_claims_metric(fixture: Fixture | None) -> Callable:
+    def metric(
+        gold: dspy.Example,
+        pred: dspy.Prediction,
+        trace: Any = None,  # noqa: ARG001
+        pred_name: str | None = None,
+        pred_trace: Any = None,  # noqa: ARG001
+    ) -> float | dspy.Prediction:
+        case_id = gold.get("case_id")
+        target_case: Any = (
+            (fixture or load_fixture()).case(case_id) if case_id is not None else gold
+        )
+        result = score_event_claims_case(
+            target_case, getattr(pred, "claims", None), purpose="optimize"
+        )
+        if pred_name is None:
+            return result.score
+        return dspy.Prediction(score=result.score, feedback=result.feedback)
+
+    return metric
+
+
+def _consolidation_metric() -> Callable:
+    def metric(
+        gold: dspy.Example,
+        pred: dspy.Prediction,
+        trace: Any = None,  # noqa: ARG001
+        pred_name: str | None = None,
+        pred_trace: Any = None,  # noqa: ARG001
+    ) -> float | dspy.Prediction:
+        result = score_consolidation_case(gold, getattr(pred, "decision", None), purpose="optimize")
+        if pred_name is None:
+            return result.score
+        return dspy.Prediction(score=result.score, feedback=result.feedback)
+
+    return metric
 
 
 def _evidence_metric(task: str, fixture: Fixture | None) -> Callable:

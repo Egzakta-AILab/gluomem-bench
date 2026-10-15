@@ -9,9 +9,13 @@ from __future__ import annotations
 import dspy
 from gluomem.llm.signatures import (
     TASK_SIGNATURES,
+    ClaimConsolidation,
     CognifyExtraction,
+    ConsolidateClaimSignature,
     ContradictionCheck,
+    EventClaimExtraction,
     EventExtraction,
+    ExtractEventClaimsSignature,
     FactExtraction,
     make_cognify_signature,
 )
@@ -87,9 +91,13 @@ __all__ = [
     "TASK_SIGNATURES",
     "AnswerQA",
     "AnswerQAPreferenceAware",
+    "ClaimConsolidation",
     "CognifyExtraction",
+    "ConsolidateClaimSignature",
     "ContradictionCheck",
+    "EventClaimExtraction",
     "EventExtraction",
+    "ExtractEventClaimsSignature",
     "FactExtraction",
     "JudgeQA",
     "JudgeQATyped",

@@ -84,6 +84,8 @@ replace-imports-with-any = [
     "pgvector.*",
     "psycopg",
     "psycopg.*",
+    "psycopg_pool",
+    "psycopg_pool.*",
     "sentence_transformers",
     "sentence_transformers.*",
     "sqlalchemy",

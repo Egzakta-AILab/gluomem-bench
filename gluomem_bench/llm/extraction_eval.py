@@ -342,6 +342,8 @@ class Case:
         if self.task == "event_extraction":
             ref = datetime.fromisoformat(self.reference_date or "")
             return {"source_text": self.source, "reference_date": ref}
+        if self.task == "event_claims":
+            return {"source_text": self.source, "reference_date": self.reference_date or ""}
         return {"text": self.source}
 
 
@@ -921,3 +923,424 @@ def scorecard(scores: Sequence[CaseScore], *, fixture: Fixture | None = None) ->
         "languages": {k: round(sum(v) / len(v), 4) for k, v in sorted(languages.items())},
         "cases": [s.record() for s in scores],
     }
+
+
+# --------------------------------------------------------------------------
+# Unified Single-Pass Claim Extraction & Consolidation Scoring
+# --------------------------------------------------------------------------
+
+_VALID_MEMORY_KINDS = frozenset(
+    {
+        "fact",
+        "profile",
+        "preference",
+        "decision",
+        "procedure",
+        "episode",
+        "correction",
+        "summary",
+    }
+)
+_VALID_CONSOLIDATION_ACTIONS = frozenset({"ADD", "SUPERSEDE", "NOOP", "CANDIDATE"})
+
+
+@dataclass(frozen=True)
+class ClaimSpecItem:
+    text: str
+    kind: str = "fact"
+    confidence: float = 1.0
+    event_date: datetime | None = None
+    verbatim_span: str = ""
+    entities: tuple[str, ...] = ()
+    relations: tuple[tuple[str, str, str], ...] = ()
+
+
+def coerce_claim_specs(raw: Any) -> list[ClaimSpecItem] | None:
+    """Validate and coerce predicted ``ExtractedClaimSpec`` objects or dicts."""
+    if hasattr(raw, "claims") and not isinstance(raw, list | tuple | Mapping):
+        raw = raw.claims
+    if raw is None or not isinstance(raw, list | tuple):
+        return None
+    specs: list[ClaimSpecItem] = []
+    for entry in raw:
+        if hasattr(entry, "model_dump"):
+            entry = entry.model_dump()
+        if not isinstance(entry, Mapping):
+            return None
+        text = entry.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return None
+        kind = entry.get("kind", "fact")
+        if not isinstance(kind, str) or kind not in _VALID_MEMORY_KINDS:
+            return None
+        confidence = entry.get("confidence", 1.0)
+        if not isinstance(confidence, int | float) or not 0 <= float(confidence) <= 1:
+            return None
+        when = entry.get("event_date")
+        if isinstance(when, str) and when.strip():
+            try:
+                when = datetime.fromisoformat(when)
+            except ValueError:
+                return None
+        elif isinstance(when, str):
+            when = None
+        if when is not None and not isinstance(when, datetime):
+            return None
+        span = entry.get("verbatim_span", "")
+        if span is None:
+            span = ""
+        if not isinstance(span, str):
+            return None
+        raw_entities = entry.get("entities") or []
+        if not isinstance(raw_entities, list | tuple):
+            return None
+        ent_names: list[str] = []
+        for ent in raw_entities:
+            if hasattr(ent, "model_dump"):
+                ent = ent.model_dump()
+            if not isinstance(ent, Mapping) or not isinstance(ent.get("name"), str):
+                return None
+            if ent["name"].strip():
+                ent_names.append(ent["name"].strip())
+        raw_relations = entry.get("relations") or []
+        if not isinstance(raw_relations, list | tuple):
+            return None
+        rels: list[tuple[str, str, str]] = []
+        for rel in raw_relations:
+            if hasattr(rel, "model_dump"):
+                rel = rel.model_dump()
+            if not isinstance(rel, Mapping):
+                return None
+            src = rel.get("source")
+            tgt = rel.get("target")
+            rtype = rel.get("relation_type", "related_to")
+            if not isinstance(src, str) or not isinstance(tgt, str) or not isinstance(rtype, str):
+                return None
+            if src.strip() and tgt.strip():
+                rels.append((src.strip(), rtype.strip(), tgt.strip()))
+        specs.append(
+            ClaimSpecItem(
+                text=text.strip(),
+                kind=kind,
+                confidence=float(confidence),
+                event_date=when,
+                verbatim_span=span.strip(),
+                entities=tuple(ent_names),
+                relations=tuple(rels),
+            )
+        )
+    return specs
+
+
+def _record_dict(obj: Any) -> dict[str, Any]:
+    if isinstance(obj, Mapping):
+        return dict(obj)
+    if hasattr(obj, "toDict"):
+        return dict(obj.toDict())
+    return dict(getattr(obj, "__dict__", {}))
+
+
+def _coerce_event_claims_case(case: Case | Mapping[str, Any] | Any) -> Case:
+    if isinstance(case, Case):
+        return case
+    data = _record_dict(case)
+    case_id = str(data.get("case_id", "event_claims_case"))
+    split = str(data.get("split", "train"))
+    language = str(data.get("language", "en"))
+    source = str(data.get("source") or data.get("source_text") or "")
+    ref_date = data.get("reference_date")
+    raw_claims = data.get("claims") or []
+    entities = {
+        str(name): tuple(_pattern(a) for a in aliases)
+        for name, aliases in (data.get("entities") or {}).items()
+    }
+    parsed_claims: list[Claim] = []
+    for idx, raw_claim in enumerate(raw_claims):
+        if isinstance(raw_claim, Claim):
+            parsed_claims.append(raw_claim)
+            continue
+        if hasattr(raw_claim, "model_dump"):
+            raw_claim = raw_claim.model_dump()
+        if isinstance(raw_claim, Mapping) and "anchors" in raw_claim:
+            parsed_claims.append(_parse_claim(raw_claim, case_id, source))
+            continue
+        if isinstance(raw_claim, Mapping):
+            text = str(raw_claim.get("text", "")).strip()
+            support = str(
+                raw_claim.get("support") or raw_claim.get("verbatim_span") or text
+            ).strip()
+            if support not in source and source:
+                support = source
+            tokens = [t for t in normalize(text or support) if len(t) > 2]
+            if not tokens:
+                tokens = normalize(text or support)
+            anchors = tuple(((t,),) for t in tokens)
+            ev_date = raw_claim.get("date") or raw_claim.get("event_date")
+            if isinstance(ev_date, datetime):
+                ev_date = ev_date.date().isoformat()
+            elif isinstance(ev_date, str) and "T" in ev_date:
+                ev_date = ev_date.split("T", 1)[0]
+            parsed_claims.append(
+                Claim(
+                    claim_id=str(raw_claim.get("claim_id", f"c{idx + 1}")),
+                    anchors=anchors,
+                    support=support,
+                    subject=raw_claim.get("subject"),
+                    negated=bool(raw_claim.get("negated", False)),
+                    modality=raw_claim.get("modality", "asserted"),
+                    status=raw_claim.get("status", "current"),
+                    date=str(ev_date) if ev_date else None,
+                    required=bool(raw_claim.get("required", True)),
+                )
+            )
+    has_dates = any(c.date is not None for c in parsed_claims)
+    task = "event_extraction" if has_dates else str(data.get("task", "fact_extraction"))
+    return Case(
+        case_id=case_id,
+        task=task,
+        language=language,
+        split=split,
+        source_family=str(data.get("source_family", "event_claims")),
+        source=source,
+        entities=entities,
+        claims=tuple(parsed_claims),
+        reference_date=str(ref_date) if ref_date is not None else None,
+    )
+
+
+def score_event_claims_case(
+    case: Case | Mapping[str, Any] | Any,
+    raw_claims: Any,
+    *,
+    purpose: Purpose = "optimize",
+) -> CaseScore:
+    """Score unified ``EventClaimExtraction`` predictions against ``case``."""
+    if purpose not in ("optimize", "report"):
+        raise ValueError(f"purpose must be 'optimize' or 'report', not {purpose!r}")
+    resolved_case = _coerce_event_claims_case(case)
+    if (
+        any(c.date is not None for c in resolved_case.claims)
+        and resolved_case.task != "event_extraction"
+    ):
+        resolved_case = Case(
+            case_id=resolved_case.case_id,
+            task="event_extraction",
+            language=resolved_case.language,
+            split=resolved_case.split,
+            source_family=resolved_case.source_family,
+            source=resolved_case.source,
+            entities=resolved_case.entities,
+            claims=resolved_case.claims,
+            reference_date=resolved_case.reference_date,
+        )
+    sealed = resolved_case.split == SEALED_SPLIT
+    if sealed and purpose == "optimize":
+        raise SealedSplitError(
+            f"case {resolved_case.case_id!r} is in {SEALED_SPLIT}; "
+            "it cannot be used for optimization"
+        )
+
+    specs = coerce_claim_specs(raw_claims)
+    if specs is None:
+        return score_case(resolved_case, None, purpose=purpose)
+
+    source_tokens = normalize(resolved_case.source)
+    span_supported = 0
+    for spec in specs:
+        if not spec.verbatim_span:
+            span_supported += 1
+        elif spec.verbatim_span in resolved_case.source or (
+            (span_tokens := tuple(normalize(spec.verbatim_span)))
+            and _find(span_tokens, source_tokens) >= 0
+        ):
+            span_supported += 1
+
+    raw_items = [
+        {"text": spec.text, "confidence": spec.confidence, "event_date": spec.event_date}
+        for spec in specs
+    ]
+    base = score_case(resolved_case, raw_items, purpose=purpose)
+    span_fidelity = _rate(span_supported, len(specs))
+    components = {**base.components, "span_fidelity": span_fidelity}
+    errors = dict(base.errors)
+    unsupported_spans = len(specs) - span_supported
+    if unsupported_spans > 0:
+        errors["unsupported_span"] = unsupported_spans
+    return CaseScore(
+        case_id=base.case_id,
+        split=base.split,
+        language=base.language,
+        score=base.score,
+        components=components,
+        errors=dict(sorted(errors.items())),
+        covered=base.covered,
+        missed=base.missed,
+        items=base.items,
+        capability_counts=base.capability_counts,
+        feedback=base.feedback,
+        no_fact=base.no_fact,
+    )
+
+
+def score_consolidation_case(
+    case: Mapping[str, Any] | Any,
+    raw_decision: Any,
+    *,
+    purpose: Purpose = "optimize",
+) -> CaseScore:
+    """Score a ``ClaimConsolidation`` decision against expected action and target frame ID."""
+    if purpose not in ("optimize", "report"):
+        raise ValueError(f"purpose must be 'optimize' or 'report', not {purpose!r}")
+
+    data = _record_dict(case)
+    case_id = str(data.get("case_id", "consolidation"))
+    split = str(data.get("split", "train"))
+    language = str(data.get("language", "en"))
+    sealed = split == SEALED_SPLIT
+    if sealed and purpose == "optimize":
+        raise SealedSplitError(
+            f"case {case_id!r} is in {SEALED_SPLIT}; it cannot be used for optimization"
+        )
+
+    gold_obj = data.get("decision")
+    if hasattr(gold_obj, "model_dump"):
+        gold_obj = gold_obj.model_dump()
+    if isinstance(gold_obj, Mapping):
+        gold_action = str(gold_obj.get("action", "ADD"))
+        gold_target = gold_obj.get("target_frame_id")
+    else:
+        gold_action = str(data.get("expected_action") or data.get("action") or "ADD")
+        gold_target = data.get("expected_target_frame_id", data.get("target_frame_id"))
+    if gold_target is not None:
+        gold_target = int(gold_target)
+
+    raw_candidates = data.get("candidates") or []
+    candidate_ids: set[int] = set()
+    for cand in raw_candidates:
+        if hasattr(cand, "frame_id"):
+            candidate_ids.add(int(cand.frame_id))
+        elif isinstance(cand, Mapping) and "frame_id" in cand:
+            candidate_ids.add(int(cand["frame_id"]))
+
+    if (
+        hasattr(raw_decision, "decision")
+        and not isinstance(raw_decision, Mapping)
+        and not hasattr(raw_decision, "action")
+    ):
+        raw_decision = raw_decision.decision
+    if hasattr(raw_decision, "model_dump"):
+        raw_decision = raw_decision.model_dump()
+
+    capability_counts = {cap: {"tp": 0, "fp": 0, "fn": 0} for cap in CAPABILITIES}
+    if not isinstance(raw_decision, Mapping):
+        return CaseScore(
+            case_id=case_id,
+            split=split,
+            language=language,
+            score=0.0,
+            components={
+                "schema_validity": 0.0,
+                "action_accuracy": 0.0,
+                "target_accuracy": 0.0,
+            },
+            errors={"invalid_schema": 1},
+            covered=(),
+            missed=(gold_action,),
+            items=(),
+            capability_counts=capability_counts,
+            feedback="" if sealed else "Score 0.00.\nOutput is not a valid ConsolidationDecision.",
+        )
+
+    pred_action = raw_decision.get("action")
+    pred_target = raw_decision.get("target_frame_id")
+    if not isinstance(pred_action, str) or pred_action not in _VALID_CONSOLIDATION_ACTIONS:
+        return CaseScore(
+            case_id=case_id,
+            split=split,
+            language=language,
+            score=0.0,
+            components={
+                "schema_validity": 0.0,
+                "action_accuracy": 0.0,
+                "target_accuracy": 0.0,
+            },
+            errors={"invalid_schema": 1},
+            covered=(),
+            missed=(gold_action,),
+            items=(),
+            capability_counts=capability_counts,
+            feedback=(
+                ""
+                if sealed
+                else f"Score 0.00.\nInvalid consolidation action {pred_action!r}; "
+                f"expected one of {sorted(_VALID_CONSOLIDATION_ACTIONS)}."
+            ),
+        )
+    if pred_target is not None:
+        if isinstance(pred_target, bool) or not isinstance(pred_target, int):
+            return CaseScore(
+                case_id=case_id,
+                split=split,
+                language=language,
+                score=0.0,
+                components={
+                    "schema_validity": 0.0,
+                    "action_accuracy": 0.0,
+                    "target_accuracy": 0.0,
+                },
+                errors={"invalid_schema": 1},
+                covered=(),
+                missed=(gold_action,),
+                items=(),
+                capability_counts=capability_counts,
+                feedback="" if sealed else "Score 0.00.\ntarget_frame_id must be an int or null.",
+            )
+
+    action_ok = pred_action == gold_action
+    target_ok = (pred_target is None) if gold_action == "ADD" else (pred_target == gold_target)
+    errors: dict[str, int] = {}
+    if not action_ok:
+        errors["wrong_action"] = 1
+    if not target_ok:
+        errors["wrong_target"] = 1
+    if pred_target is not None and candidate_ids and pred_target not in candidate_ids:
+        errors["invalid_target"] = 1
+
+    if action_ok and target_ok and "invalid_target" not in errors:
+        score = 1.0
+    elif action_ok:
+        score = 0.5
+    else:
+        score = 0.0
+
+    feedback = ""
+    if not sealed:
+        if score == 1.0:
+            feedback = (
+                f"Score 1.00.\n"
+                f"Correct consolidation decision ({gold_action}, target={gold_target})."
+            )
+        else:
+            feedback = (
+                f"Score {score:.2f}.\n"
+                f"Expected action={gold_action!r} target_frame_id={gold_target!r}, "
+                f"got action={pred_action!r} target_frame_id={pred_target!r}."
+            )
+
+    return CaseScore(
+        case_id=case_id,
+        split=split,
+        language=language,
+        score=score,
+        components={
+            "schema_validity": 1.0,
+            "action_accuracy": 1.0 if action_ok else 0.0,
+            "target_accuracy": 1.0 if target_ok else 0.0,
+        },
+        errors=dict(sorted(errors.items())),
+        covered=(gold_action,) if score == 1.0 else (),
+        missed=() if score == 1.0 else (gold_action,),
+        items=(),
+        capability_counts=capability_counts,
+        feedback=feedback,
+    )
