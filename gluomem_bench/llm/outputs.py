@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from gluomem.llm.outputs import (
     CognifyResult,
+    ConsolidationAction,
+    ConsolidationDecision,
     ContradictionVerdict,
+    ExtractedClaimSpec,
     ExtractedEvent,
     ExtractedFact,
     ExtractionError,
     Extractors,
     KGEntity,
     KGRelation,
+    StoredCandidate,
 )
 from pydantic import BaseModel, Field
 
@@ -34,12 +38,16 @@ class AnswerResult(BaseModel):
 __all__ = [
     "AnswerResult",
     "CognifyResult",
+    "ConsolidationAction",
+    "ConsolidationDecision",
     "ContradictionVerdict",
+    "ExtractedClaimSpec",
     "ExtractedEvent",
     "ExtractedFact",
     "ExtractionError",
     "Extractors",
     "KGEntity",
     "KGRelation",
+    "StoredCandidate",
     "Verdict",
 ]

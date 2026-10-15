@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, Any
 from gluomem.llm import (
     CachedExtractors,
     CognifyResult,
+    ConsolidationAction,
+    ConsolidationDecision,
     ContradictionVerdict,
+    ExtractedClaimSpec,
     ExtractedEvent,
     ExtractedFact,
     ExtractionCacheMiss,
@@ -17,6 +20,7 @@ from gluomem.llm import (
     KGEntity,
     KGRelation,
     NullExtractors,
+    StoredCandidate,
     make_extractors,
 )
 
@@ -31,7 +35,10 @@ __all__ = [
     "Answerer",
     "CachedExtractors",
     "CognifyResult",
+    "ConsolidationAction",
+    "ConsolidationDecision",
     "ContradictionVerdict",
+    "ExtractedClaimSpec",
     "ExtractedEvent",
     "ExtractedFact",
     "ExtractionCacheMiss",
@@ -42,6 +49,7 @@ __all__ = [
     "KGRelation",
     "NullExtractors",
     "QAJudge",
+    "StoredCandidate",
     "Verdict",
     "build_answer_module",
     "build_judge_module",
