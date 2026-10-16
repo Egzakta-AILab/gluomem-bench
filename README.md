@@ -25,6 +25,15 @@ uv run gluomem-bench tune --cache-dir runs/cache --out runs/tune.json
 uv run gluomem-bench ablate --cache-dir runs/cache --out runs/ablate.md
 ```
 
+## BEAM 128K (adapted rubric protocol)
+
+Use `uv run gluomem-bench beam --help` for the isolated rack-only
+`profile`, `prepare`, `ingest`, `run`, and offline `rescore` commands.
+Dataset source, license and immutable revision pins are in
+`benchmarks_data/beam_128k_source.json`. Configure your own model endpoint;
+machine-specific profiles and internal run receipts do not belong in this repository.
+No full BEAM campaign or native paper-score reproduction is claimed.
+
 ## Checks
 
 ```bash

@@ -630,6 +630,9 @@ def main(argv: list[str] | None = None) -> int:
     _add_config_args(ingest)
 
     _add_bench_parsers(sub)
+    from gluomem_bench.bench.beam_cli import add_parsers
+
+    add_parsers(sub)
 
     components = sub.add_parser(
         "components",
@@ -666,6 +669,10 @@ def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     if args.command is None:
         parser.print_help()
         return 0
+    if args.command == "beam":
+        from gluomem_bench.bench.beam_cli import dispatch
+
+        return dispatch(args)
     if args.command == "ingest":
         return _cmd_ingest(args)
     if args.command == "components":

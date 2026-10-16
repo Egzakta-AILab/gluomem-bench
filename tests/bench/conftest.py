@@ -33,6 +33,20 @@ FAKE_BACKENDS: dict[str, object] = {
 
 
 @pytest.fixture
+def rack_profile_path(tmp_path: Path) -> Path:
+    from gluomem_bench.bench.rack import RackProfile
+
+    path = tmp_path / "operator-profile.json"
+    path.write_text(
+        RackProfile(
+            base_url="http://localhost:8000/v1", model="example/served-model"
+        ).model_dump_json(),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.fixture
 def bench_cfg() -> AppConfig:
     return load_config().with_overrides(dict(BENCH_OVERRIDES))
 
