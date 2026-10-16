@@ -14,6 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+beam = ["pyarrow>=20"]
 mem0 = [
     "mem0ai>=0.1",
 ]
@@ -21,7 +22,7 @@ embeddings = [
     "sentence-transformers>=3.0",
 ]
 all = [
-    "gluomem-bench[mem0,embeddings]",
+    "gluomem-bench[mem0,embeddings,beam]",
 ]
 
 [project.scripts]
@@ -80,6 +81,8 @@ replace-imports-with-any = [
     "mem0.*",
     "optuna",
     "optuna.*",
+    "pyarrow",
+    "pyarrow.*",
     "pgvector",
     "pgvector.*",
     "psycopg",

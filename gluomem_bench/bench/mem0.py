@@ -89,7 +89,10 @@ def build_mem0_config(cfg: AppConfig, *, conv_dir: Path) -> dict[str, Any]:
 def _session_messages(session: Session) -> list[dict[str, str]]:
     iso = session.date_time.isoformat()
     return [
-        {"role": "user", "content": f"[{iso}] {turn.speaker}: {turn.text}"}
+        {
+            "role": turn.speaker if turn.speaker in ("user", "assistant") else "user",
+            "content": f"[{iso}] {turn.speaker}: {turn.text}",
+        }
         for turn in session.turns
     ]
 
@@ -335,7 +338,8 @@ class Mem0Retriever:
                 "rerank": "mem0-default",
             },
             "identity_mapping": (
-                "user_id=conv_id; all turns role=user; content "
+                "user_id=conv_id; native user/assistant roles preserved; "
+                "named speakers role=user; content "
                 "'[session_iso] Speaker: text'; session date also in metadata"
             ),
             "evidence_metrics": "not-applicable (distilled memories, no dia_ids)",

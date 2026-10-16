@@ -389,6 +389,8 @@ def run_benchmark(
     embedder: Embedder | None = None,
     reranker: Reranker | None = None,
 ) -> RunPaths:
+    if dataset == "beam_128k":
+        raise ValueError("BEAM uses rubric nuggets, not QA accuracy; use `gluomem-bench beam run`")
     # Bench methodology: LoCoMo's usable categories carry no abstention gold, so
     # abstaining is always scored wrong — never beneficial — and no threshold
     # has been calibrated on frozen development data yet. Disable the gate here

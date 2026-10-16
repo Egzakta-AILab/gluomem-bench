@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
+from gluomem_bench.bench.adapters.beam import BeamAdapter
 from gluomem_bench.bench.adapters.locomo import DatasetError, LoCoMoAdapter
 from gluomem_bench.bench.adapters.longmemeval import LongMemEvalAdapter
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from gluomem_bench.config import AppConfig
 
 ADAPTERS: dict[str, Callable[[AppConfig], DatasetAdapter]] = {
+    "beam_128k": BeamAdapter,
     "locomo": LoCoMoAdapter,
     "longmemeval_oracle": lambda cfg: LongMemEvalAdapter(cfg, "longmemeval_oracle"),
     "longmemeval_s": lambda cfg: LongMemEvalAdapter(cfg, "longmemeval_s"),

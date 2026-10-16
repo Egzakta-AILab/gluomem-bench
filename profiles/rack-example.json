@@ -1,0 +1,20 @@
+{
+  "profile_version": "role-budgets-v2",
+  "base_url": "https://rack.example.com/v1",
+  "model": "example/served-model",
+  "concurrency": 1,
+  "temperature": 0,
+  "max_tokens": 512,
+  "max_generation_calls": 256,
+  "max_run_seconds": 900,
+  "generation_budgets": {
+    "extraction": 16384,
+    "consolidation": 1024,
+    "reader": 2048,
+    "judge": 512
+  },
+  "timeout_seconds": 120,
+  "max_input_chars": 2000000,
+  "context_window": 131072,
+  "schema_reserve_tokens": 2048
+}
