@@ -44,6 +44,15 @@ under separate reviewed authority before making comparative claims.
 
 ## Offline checks and operator inputs
 
+The PR's test additions have been reduced: 70 newly added test/fixture files
+(23,370 lines) were removed. Existing upstream tests are preserved. Retained
+coverage focuses on diagnostic privacy, budget accounting, source/scoring
+integrity, resource membership and native backend boundaries. Tests referenced
+by production frozen inventories, plus their helper dependencies, remain so
+that removing tests does not break inventory construction or admission checks.
+This is intentionally reduced coverage, not evidence that every removed test
+was redundant or that the broader harness is now fully verified.
+
 Use an isolated environment with the declared development dependencies and the
 companion core checkout. Disable dotenv autoload and external network access;
 use authored loopback fixtures and newly owned scratch SQLite stores only.
