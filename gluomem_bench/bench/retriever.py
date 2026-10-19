@@ -164,7 +164,7 @@ class GluoMemRetriever:
                 )
             )
             lines.append(f"[{frame.event_time or frame.created_at}] {frame.content}")
-        out = self._answer_fn(s.question, "\n".join(lines))
+        out = self._answer_fn(s.reader_question, "\n".join(lines))
         return Prediction(
             sample_id=s.id,
             answer=out.text,

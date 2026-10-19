@@ -3,9 +3,9 @@ Copyright 2026 Egzakta
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
-GluoMem source code was written for this project; it does not bundle or vendor
-third-party source code. Python dependencies are installed separately by the
-package manager under their own licenses and are not redistributed here.
+Except for the attributed scoring adaptation below, source code was written for
+this project. Python dependencies are installed separately by the package
+manager under their own licenses and are not redistributed here.
 
 Benchmark datasets are not included. `gluomem bench fetch` downloads them on
 request from their publishers, and they remain under their own terms:
@@ -20,3 +20,31 @@ synthetic conversations shaped like those formats.
 
 The optional `mem0` extra installs mem0ai (Apache License 2.0) for comparison
 runs; it is not required by the core package.
+
+Scoring attribution
+-------------------
+gluomem_bench/bench/upstream_scoring.py adapts normalization, substring matching
+and answer parsing from HUST-AI-HYZ/MemoryAgentBench, utils/eval_other_utils.py.
+The scoped MAB adapter paraphrases conflict-task instructions from
+utils/templates.py in the same repository, at
+revision 538026089d1a8a8eff05121d0db89b388f360eba, under the MIT License:
+
+Copyright (c) 2026 Yuanzhe Hu
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

@@ -43,6 +43,18 @@ class Sample:
     category: int
     category_name: str
     evidence: tuple[str, ...] = ()
+    question_date: str | None = None
+    task_instructions: str | None = None
+
+    @property
+    def reader_question(self) -> str:
+        """Use the dataset's query clock, never the execution wall clock."""
+        question = self.question
+        if self.question_date is not None:
+            question = f"Current Date: {self.question_date}\nQuestion: {self.question}"
+        if self.task_instructions:
+            question = f"{self.task_instructions}\n{question}"
+        return question
 
 
 @dataclass(frozen=True)

@@ -57,6 +57,27 @@ def _turn_docs(conv: Conversation) -> list[tuple[str, str, str]]:
     return docs
 
 
+class NoMemoryRetriever:
+    """Question-only control using the same reader as memory conditions."""
+
+    name = "no_memory"
+    retrieves = False
+
+    def __init__(self, cfg: AppConfig, answer_fn: AnswerFn) -> None:
+        self._answer_fn = answer_fn
+
+    def answer(self, s: Sample) -> Prediction:
+        start = time.perf_counter()
+        out = self._answer_fn(s.reader_question, "")
+        return Prediction(
+            sample_id=s.id,
+            answer=out.text,
+            prompt_tokens=out.prompt_tokens,
+            completion_tokens=out.completion_tokens,
+            latency_ms=(time.perf_counter() - start) * 1000.0,
+        )
+
+
 class FullContextRetriever:
     """No memory system at all: the (truncated) transcript is the context.
 
@@ -72,9 +93,12 @@ class FullContextRetriever:
         cfg: AppConfig,
         conversations: Sequence[Conversation],
         answer_fn: AnswerFn,
+        *,
+        allow_truncation: bool = True,
     ) -> None:
         self._cfg = cfg
         self._answer_fn = answer_fn
+        self._allow_truncation = allow_truncation
         self._transcripts = {c.conv_id: transcript(c) for c in conversations}
 
     def answer(self, s: Sample) -> Prediction:
@@ -82,9 +106,11 @@ class FullContextRetriever:
         text = self._transcripts[s.conv_id]
         limit = self._cfg.benchmark.full_context.max_chars
         if len(text) > limit:
+            if not self._allow_truncation:
+                raise ValueError("complete history exceeds character allowance; no truncation")
             keep = self._cfg.benchmark.full_context.keep
             text = text[-limit:] if keep == "tail" else text[:limit]
-        out = self._answer_fn(s.question, text)
+        out = self._answer_fn(s.reader_question, text)
         return Prediction(
             sample_id=s.id,
             answer=out.text,
@@ -160,7 +186,7 @@ class Bm25Retriever:
                 latency_ms=(time.perf_counter() - start) * 1000.0,
                 abstention={"reason": "no_hits", "candidates": 0},
             )
-        out = self._answer_fn(s.question, "\n".join(lines))
+        out = self._answer_fn(s.reader_question, "\n".join(lines))
         return Prediction(
             sample_id=s.id,
             answer=out.text,
@@ -225,7 +251,7 @@ class VectorRagRetriever:
                 RetrievedDoc(rank=rank, text=content, score=float(sims[idx]), dia_id=dia_id)
             )
             lines.append(f"[{date_iso}] {content}")
-        out = self._answer_fn(s.question, "\n".join(lines))
+        out = self._answer_fn(s.reader_question, "\n".join(lines))
         return Prediction(
             sample_id=s.id,
             answer=out.text,
@@ -239,6 +265,7 @@ class VectorRagRetriever:
 __all__ = [
     "Bm25Retriever",
     "FullContextRetriever",
+    "NoMemoryRetriever",
     "VectorRagRetriever",
     "transcript",
 ]

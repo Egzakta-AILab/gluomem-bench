@@ -34,6 +34,15 @@ Dataset source, license and immutable revision pins are in
 machine-specific profiles and internal run receipts do not belong in this repository.
 No full BEAM campaign or native paper-score reproduction is claimed.
 
+## Multi-family harness and native comparisons
+
+The harness includes MAB, BEAM, V2 and MemoryArena drivers, guarded native
+comparison adapters, accounting, resource lifecycle and schema evidence.
+See [publication status and reproducibility](docs/PUBLICATION_STATUS.md) for
+method boundaries, verification limits and the historical failure status.
+These additions do not establish benchmark superiority or official reproduction.
+Keep deployment profiles, source data and all run artifacts outside the repository.
+
 ## Checks
 
 ```bash
