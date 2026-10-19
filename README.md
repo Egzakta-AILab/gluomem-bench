@@ -1,6 +1,6 @@
 # gluomem-bench
 
-Benchmark harness, offline Optuna retrieval tuner, ablation runner, and DSPy prompt optimization suite for [GluoMem](https://github.com/UkisAI-Egzakta/GluoMem).
+Benchmark harness, offline Optuna retrieval tuner, ablation runner, and DSPy prompt optimization suite for [GluoMem](https://github.com/Egzakta-AILab/GluoMem).
 
 ## Scope
 

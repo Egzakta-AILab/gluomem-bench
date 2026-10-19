@@ -13,5 +13,5 @@ and their benchmark numbers are not currently reproducible.
 | [EVIDENCE_INVENTORY.md](./EVIDENCE_INVENTORY.md) | What exists, what moved, what is missing, with hashes | Current |
 
 The governing documents for the code remain [README.md](../../README.md),
-[GluoMem SPEC.md](https://github.com/UkisAI-Egzakta/GluoMem/blob/main/SPEC.md), and
-[GluoMem DESIGN.md](https://github.com/UkisAI-Egzakta/GluoMem/blob/main/DESIGN.md).
+[GluoMem SPEC.md](https://github.com/Egzakta-AILab/GluoMem/blob/main/SPEC.md), and
+[GluoMem DESIGN.md](https://github.com/Egzakta-AILab/GluoMem/blob/main/DESIGN.md).
