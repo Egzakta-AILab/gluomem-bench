@@ -1836,13 +1836,9 @@ def verify_root(candidate, *, plan, candidate_path=None, budget=None, qualificat
                                     measured=resource['memory_samples'],host_reserve_mib=candidate['host_reserve_mib'])
     verify_input_cache(root,plan,inputs,budget=budget)
     cfg,profile = effective_config(plan)
-    summaries = {s:{'planned':sum(r['system']==s for r in plan['jobs']),'complete':0,'failed':0,'unrun':0,'score_sum':0,'scores':0}
-                 for s in ('gluomem','mem0','cognee','no_memory')}
     for record,row in zip(records,coordination['jobs'],strict=True):
         if budget is not None:
             budget.check()
-        summary = summaries[record['system']]
-        summary[row['status']] += 1
         if row['status'] != 'complete':
             continue
         adapter,sample = restore_input(inputs[record['sample_id']],plan)
@@ -1850,22 +1846,20 @@ def verify_root(candidate, *, plan, candidate_path=None, budget=None, qualificat
         job.output = Path(job.output)
         verify_native_job(job=job,context=SimpleNamespace(calls=row['calls']),cfg=cfg,adapter=adapter,
                           sample=sample,profile=profile,judge_source=Path(plan['judge_source']))
-        reader = job.output/'reader' if record['system']=='cognee' else job.output
-        predictions = json.loads((reader/'predictions.json').read_bytes())
-        summary['scores'] += len(predictions)
-        summary['score_sum'] += sum(r['score'] for r in predictions)
-    if report.get('systems') != summaries:
+    if report.get('systems') != _system_summaries(plan,coordination,root,budget=budget):
         raise ValueError('root native score aggregation differs')
     if budget is not None:
         budget.check()
     return report
 
 
-def _root_report(candidate,plan,coordination):
-    root = Path(candidate['output_root'])
+def _system_summaries(plan,coordination,root,*,budget=None):
+    """Fold native system totals only; callers authenticate evidence separately."""
     summaries = {s:{'planned':sum(r['system']==s for r in plan['jobs']),'complete':0,'failed':0,'unrun':0,'score_sum':0,'scores':0}
                  for s in ('gluomem','mem0','cognee','no_memory')}
     for record,row in zip(plan['jobs'],coordination['jobs'],strict=True):
+        if budget is not None:
+            budget.check()
         summary = summaries[record['system']]
         summary[row['status']] += 1
         if row['status']=='complete':
@@ -1875,6 +1869,11 @@ def _root_report(candidate,plan,coordination):
             predictions = json.loads((reader/'predictions.json').read_bytes())
             summary['scores'] += len(predictions)
             summary['score_sum'] += sum(r['score'] for r in predictions)
+    return summaries
+
+
+def _root_report(candidate,plan,coordination):
+    summaries = _system_summaries(plan,coordination,Path(candidate['output_root']))
     return {'protocol':EXECUTION_PROTOCOL,'quality_complete':all(r['status']=='complete' for r in coordination['jobs']),
             'planned':len(plan['jobs']),'jobs':coordination['jobs'],'accounting':coordination['accounting'],
             'systems':summaries,'historical_quality_pooled':False,

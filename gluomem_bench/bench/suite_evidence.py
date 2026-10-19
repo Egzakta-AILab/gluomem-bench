@@ -11,6 +11,7 @@ import json
 from collections import Counter
 from pathlib import Path
 
+from gluomem_bench.bench.artifacts import verify_artifact_hashes
 from gluomem_bench.bench.rack import RackProfile
 from gluomem_bench.bench.types import Sample
 from gluomem_bench.bench.upstream_scoring import load_longmemeval_prompt
@@ -148,12 +149,7 @@ def validate_bundle(out: Path, manifest: dict, *, expected=None, require_real=Fa
         raise ValueError("workload identity differs from frozen plan")
     if (out / "failure.json").exists():
         raise ValueError("complete workload contains failure receipt")
-    for name, digest in inventory.items():
-        target = (out / name).resolve()
-        if (not target.is_relative_to(out) or target.relative_to(out).as_posix() != name
-                or not target.is_file()
-                or hashlib.sha256(target.read_bytes()).hexdigest() != digest):
-            raise ValueError("artifact byte hash mismatch or noncanonical path")
+    verify_artifact_hashes(out, inventory, canonical_names=True)
     protocol = _json(out / "protocol.json")
     for key in ("protocol", "dataset", "system", "sample_ids"):
         if protocol.get(key) != manifest.get(key):

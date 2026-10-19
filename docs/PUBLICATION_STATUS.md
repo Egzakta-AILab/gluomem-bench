@@ -44,6 +44,14 @@ under separate reviewed authority before making comparative claims.
 
 ## Offline checks and operator inputs
 
+Shared artifact/inventory, Arena reservation and experience-memory components
+replace repeated driver plumbing. Old formal-driver memory exports remain
+compatible aliases; historical bridges still compare exact archived/current
+class ASTs at their actual definition files. Source movement does not authorize
+reuse of old byte-bound execution approvals. Native leaf authentication remains
+independent of shared report aggregation. This is structural consolidation, not
+a claim of a large line-count reduction or a successful native evaluation.
+
 The PR's test additions have been reduced: 70 newly added test/fixture files
 (23,370 lines) were removed. Existing upstream tests are preserved. Retained
 coverage focuses on diagnostic privacy, budget accounting, source/scoring

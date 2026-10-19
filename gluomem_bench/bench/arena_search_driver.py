@@ -20,6 +20,7 @@ from typing import Any, Optional
 from gluomem_bench.bench.error_privacy import safe_error
 
 from . import arena_campaign as shared
+from .artifacts import sha256_file as sha
 from .embedding_runtime import EmbeddingRecipe, RemoteEmbedder
 from .rack import FatalRackError, RackClient, SharedRackError
 
@@ -56,14 +57,6 @@ PROTOCOL = "memoryarena-search-full@v1"
 SYSTEMS = ("no_memory", "bm25", "dense", "hybrid", "full_context", "gluomem")
 DATA_SHA = "b445ee36fa3ccb9ad08eae9e7adda86bbc64f14f1e2a0682a8b2085cdb8e4c0e"
 CORPUS_SHA = "a7d63ac2095e6bc21d6aa644fa5a9881a78a11634d4f4d2568dab3f98ab259f4"
-
-
-def sha(path):
-    digest = hashlib.sha256()
-    with Path(path).open("rb") as stream:
-        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def write_json(path, value):
@@ -1506,15 +1499,10 @@ class OriginalQueryEncoder:
 def _execute_verified(spec, *, spec_path, approval_path, admission):
     import zipfile
 
-    from gluomem.llm.modules import DspyExtractors
     from transformers import AutoTokenizer
 
-    from .arena_driver import (
-        ArenaProductionRouter,
-        GluoExperienceMemory,
-        RawExperienceMemory,
-        execute_matrix,
-    )
+    from .arena_driver import execute_matrix
+    from .experience_memory import RawExperienceMemory, production_memory
     from .rack import RackProfile, controlled_config
     from .trajectory_suite import load_arena
 
@@ -1614,17 +1602,8 @@ def _execute_verified(spec, *, spec_path, approval_path, admission):
                         embedder=encoder,
                     )
                     write_json(out / "effective-config.json", cfg.model_dump(mode="json"))
-                    router = ArenaProductionRouter(
-                        cfg, client=client, trace=out / "production-raw.jsonl", budget=budget
-                    )
-                    return GluoExperienceMemory(
-                        cfg=cfg,
-                        extractors=DspyExtractors(cfg, router=router),
-                        embedder=encoder,
-                        budget=budget,
-                        db_path=out / "production.mind",
-                        evidence_path=out / "memory-events.jsonl",
-                        top_k=10,
+                    return production_memory(
+                        cfg, client=client, embedder=encoder, budget=budget, out=out
                     )
 
                 output = run_task(

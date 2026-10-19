@@ -94,6 +94,12 @@ import hashlib
 import json
 from pathlib import Path
 
+from gluomem_bench.bench.artifacts import (
+    dependency_paths,
+    file_inventory,
+    runtime_source_paths,
+    verify_artifact_hashes,
+)
 from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
 
 PROTOCOL = "local-qwen-development-pilot@v1"
@@ -830,44 +836,17 @@ def validate_chained_continuation_spec(spec, *, budget=None, ancestry=()):
 
 def frozen_inventory(dataset, judge_source):
     """Producer/parser/runtime bytes, not revision labels or a pilot-only sealer."""
-    import importlib.util
     import sys
 
     import gluomem
 
     project = Path(__file__).resolve().parents[2]
-    paths = set((project / "gluomem_bench").rglob("*.py"))
-    core = Path(gluomem.__file__).resolve().parent
-    paths.update(core.rglob("*.py"))
-    for pattern in ("*.sql", "*.mako"):
-        paths.update(core.rglob(pattern))
-    paths.update((core.parent / "artifacts/dspy").glob("*.json"))
+    paths = runtime_source_paths(project, Path(gluomem.__file__).resolve().parent)
     paths.add(project / "tests/bench/test_full_runtime_resources.py")
-    paths.update(
-        (
-            Path(dataset),
-            Path(judge_source),
-            Path(sys.executable),
-            project / "tests/bench/test_comprehensive_driver.py",
-        )
-    )
-    paths.update(
-        project / name for name in ("pyproject.toml", "uv.lock") if (project / name).is_file()
-    )
-    for name in ("httpx", "dspy", "litellm", "pydantic", "numpy", "mem0"):
-        location = importlib.util.find_spec(name)
-        if location is None or not location.origin:
-            raise ValueError(f"missing native dependency: {name}")
-        package = Path(location.origin).parent
-        paths.update(
-            p
-            for p in package.rglob("*")
-            if p.is_file() and p.suffix.lower() in {".py", ".pyd", ".dll", ".so", ".json"}
-        )
-    return [
-        dict(path=str(p.resolve()), sha256=hashlib.sha256(p.read_bytes()).hexdigest())
-        for p in sorted(paths, key=lambda p: str(p.resolve()))
-    ]
+    paths.update((Path(dataset), Path(judge_source), Path(sys.executable),
+                  project / "tests/bench/test_comprehensive_driver.py"))
+    paths.update(dependency_paths(("httpx", "dspy", "litellm", "pydantic", "numpy", "mem0")))
+    return file_inventory(paths)
 
 
 def _read_bound(path, digest):
@@ -2500,13 +2479,8 @@ def verify_campaign(out, *, candidate_path=None, budget=None, _ancestry=()):
         record = planned[row["job_id"]]
         if continuation and record["disposition"] != "dispatch":
             continue
-        for name, expected in row["artifact_sha256"].items():
-            path = root / name
-            if (
-                not path.resolve().is_relative_to(root.resolve())
-                or hashlib.sha256(path.read_bytes()).hexdigest() != expected
-            ):
-                raise ValueError("root job artifact hash mismatch")
+        verify_artifact_hashes(root, row["artifact_sha256"], canonical_names=False,
+                               error="root job artifact hash mismatch")
         if row["status"] == "complete" and row["result"]["quality_status"] == "complete_verified":
             record = planned[row["job_id"]]
             expected = dict(

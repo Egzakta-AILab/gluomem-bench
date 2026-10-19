@@ -19,6 +19,8 @@ from gluomem_bench.bench.error_privacy import safe_error, safe_notes
 
 from . import arena_campaign as native
 from . import arena_driver as common
+from .arena_runtime import release_context, reserve_context
+from .artifacts import sha256_file as sha
 from .trajectory_suite import load_arena
 
 PROTOCOL = "memoryarena-full-shopping-native@v1"
@@ -60,11 +62,6 @@ def plan_dataset(data_root, pins):
             for i, s in enumerate(t.sessions)
         ],
     }
-
-
-def sha(path):
-    with Path(path).open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def prepare_runtime(external_root, out):
@@ -1346,7 +1343,7 @@ def execute_matrix(
     publish=None,
     root_metadata=None,
 ):
-    from .parallel_campaign import CampaignBudget, CampaignStopped, Job, JobContext, RequestLimiter
+    from .parallel_campaign import CampaignBudget, CampaignStopped, Job, JobContext, RequestLimiter  # noqa: F401 - preserves pre-extraction AST imports
 
     tasks, systems, out = list(tasks), list(systems), Path(out)
     if (
@@ -1393,9 +1390,9 @@ def execute_matrix(
         context = None
         try:
             outer.check()
-            if not outer.reserve(job):
-                raise CampaignStopped("whole-task campaign reservation unavailable")
-            context = JobContext(job, outer, limiter)
+            context = reserve_context(
+                outer, job, limiter, "whole-task campaign reservation unavailable"
+            )
             row.update(status="running", output=str(target))
             (out / "task-statuses.json").write_bytes(native._json(matrix))
             value = run_one(task, row["system"], context, target)
@@ -1424,9 +1421,7 @@ def execute_matrix(
                 failure = json.loads((target / "failure.json").read_bytes())
                 row["completed_sessions"] = failure["completed_sessions"]
         finally:
-            if context is not None:
-                row["calls"] = context.calls
-                outer.release(context)
+            release_context(context, row)
             (out / "task-statuses.json").write_bytes(native._json(matrix))
     result = {
         "protocol": PROTOCOL,
@@ -1885,7 +1880,12 @@ def _shopping_bridge(original):
         "BudgetedArenaEmbedder",
     )
     old_memory = definitions(_shopping_old_source(original, "arena_driver.py"))
-    current_memory = definitions(Path(common.__file__).read_bytes())
+    import inspect
+
+    current_memory = {
+        n: definitions(Path(inspect.getfile(getattr(common, n))).read_bytes())[n]
+        for n in memory_classes
+    }
     if any(old_memory[n] != current_memory[n] for n in memory_classes):
         raise ValueError("Shopping memory/encoder/production algorithm changed")
     from . import rack

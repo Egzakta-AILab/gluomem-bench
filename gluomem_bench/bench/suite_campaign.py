@@ -15,6 +15,7 @@ from dataclasses import asdict, replace
 from datetime import date
 from pathlib import Path
 
+from gluomem_bench.bench.artifacts import sha256_file as _hash
 from gluomem_bench.bench.baselines import Bm25Retriever, FullContextRetriever, NoMemoryRetriever
 from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
 from gluomem_bench.bench.rack import FatalRackError, RackClient
@@ -44,10 +45,6 @@ def reader_messages(question, context):
 def _write(path, value):
     material = json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
     path.write_bytes(material.encode())
-
-
-def _hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 def make_source_events(conv, dataset):

@@ -13,6 +13,13 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+from gluomem_bench.bench.artifacts import (
+    dependency_paths,
+    file_inventory,
+    runtime_source_paths,
+    sha256_file,
+    verify_artifact_hashes,
+)
 from gluomem_bench.bench.error_privacy import safe_error, safe_kind
 
 PROTOCOL = "beam-bounded-history@v1"
@@ -678,9 +685,7 @@ def run_history(
             result.update(status="failed", complete=False, error=f'finalization: {safe_error(exc)}')
             result.pop("report", None)
             write(out / "failure.json", dict(error=result["error"], phase="offline-verification"))
-            result["artifact_sha256"]["failure.json"] = hashlib.sha256(
-                (out / "failure.json").read_bytes()
-            ).hexdigest()
+            result["artifact_sha256"]["failure.json"] = sha256_file(out / "failure.json")
     write(out / "root-status.json", result)
     return result
 
@@ -695,13 +700,8 @@ def verify_history(out, *, _candidate=None):
         if _candidate is not None
         else json.loads((out / "root-status.json").read_bytes())
     )
-    for name, expected in result["artifact_sha256"].items():
-        path = out / name
-        if (
-            not path.resolve().is_relative_to(out.resolve())
-            or hashlib.sha256(path.read_bytes()).hexdigest() != expected
-        ):
-            raise ValueError("artifact hash mismatch")
+    verify_artifact_hashes(out, result["artifact_sha256"], canonical_names=False,
+                           error="artifact hash mismatch")
     plan = json.loads((out / "plan.json").read_bytes())
     if digest(plan) != result["plan_sha256"] or [p["case_id"] for p in plan] != result["case_ids"]:
         raise ValueError("exact planned coverage mismatch")
@@ -815,7 +815,6 @@ def selection_receipt(adapter):
 
 def frozen_inventory(split, data_dir, upstream_dir, systems):
     """Freeze all local producer/parser/scorer dependencies, never revision labels."""
-    import importlib.util
     import sys
 
     import gluomem
@@ -825,43 +824,21 @@ def frozen_inventory(split, data_dir, upstream_dir, systems):
     from gluomem_bench.bench.beam_suite import dataset_spec
 
     project = Path(__file__).resolve().parents[2]
-    paths = set((project / "gluomem_bench").rglob("*.py"))
+    paths = runtime_source_paths(project, Path(gluomem.__file__).resolve().parent)
     paths.add(project / "tests/bench/test_beam_driver.py")
     paths.add(project / "tests/bench/test_beam_driver_continuation.py")
-    core = Path(gluomem.__file__).resolve().parent
-    paths.update(core.rglob("*.py"))
-    for pattern in ("*.sql", "*.mako"):
-        paths.update(core.rglob(pattern))
-    paths.update((core.parent / "artifacts/dspy").glob("*.json"))
     paths.add(project / "tests/bench/test_full_runtime_resources.py")
     paths.update(Path(upstream_dir) / name for name in set(SOURCE_SHA256) | set(ADAPTER_SOURCES))
     from gluomem_bench.bench.beam_suite import SPLITS
     for tier in SPLITS if split is None else (split,):
         paths.update(Path(data_dir) / row["file"] for row in dataset_spec(tier)["files"])
     paths.add(Path(sys.executable))
-    for name in ("pyproject.toml", "uv.lock"):
-        if (project / name).is_file():
-            paths.add(project / name)
     # Pin the runtime code used by native scoring, HTTP/DSPy and vector transport.
-    for name in ("scipy", "numpy", "pyarrow", "httpx", "dspy", "litellm", "pydantic") + (
-        ("mem0",) if "mem0" in systems else ()
-    ):
-        location = importlib.util.find_spec(name)
-        if location is None or not location.origin:
-            raise ValueError(f"missing native parser/scorer dependency: {name}")
-        package = Path(location.origin).parent
-        paths.update(
-            path
-            for path in package.rglob("*")
-            if path.is_file() and path.suffix.lower() in {".py", ".pyd", ".dll", ".so", ".json"}
-        )
-        libraries = package.parent / (package.name + ".libs")
-        if libraries.is_dir():
-            paths.update(path for path in libraries.rglob("*") if path.is_file())
-    return [
-        dict(path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-        for path in sorted(paths, key=lambda p: str(p.resolve()))
-    ]
+    paths.update(dependency_paths(
+        ("scipy", "numpy", "pyarrow", "httpx", "dspy", "litellm", "pydantic")
+        + (("mem0",) if "mem0" in systems else ()), include_libraries=True,
+        missing_error="missing native parser/scorer dependency"))
+    return file_inventory(paths)
 
 
 def dependency_preflight(spec):
@@ -1447,9 +1424,7 @@ def execute(spec_path, approval_path):
             job.update(
                 status=result["status"],
                 result=result,
-                root_status_sha256=hashlib.sha256(
-                    (root / job["system"] / "root-status.json").read_bytes()
-                ).hexdigest(),
+                root_status_sha256=sha256_file(root / job["system"] / "root-status.json"),
             )
             write(root / "root-status.json", state)
             if result["status"] == "failed":

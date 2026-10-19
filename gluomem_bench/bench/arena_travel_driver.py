@@ -26,6 +26,7 @@ from gluomem_bench.bench.error_privacy import safe_error, safe_kind
 
 from . import arena_campaign as common
 from . import arena_driver as formal
+from .arena_runtime import release_context, reserve_context
 
 PIN = common.PIN
 PREFIX = "env/env_systems/travel_planner_env/"
@@ -1422,7 +1423,7 @@ def execute_matrix(
     initialize=None,
 ):
     """Root-only authority: isolated failures, exact unrun coverage and actual spend."""
-    from .parallel_campaign import CampaignBudget, CampaignStopped, Job, JobContext, RequestLimiter
+    from .parallel_campaign import CampaignBudget, CampaignStopped, Job, JobContext, RequestLimiter  # noqa: F401 - preserves pre-extraction AST imports
 
     rows, systems, out = list(rows), list(systems), Path(out)
     if (
@@ -1470,9 +1471,7 @@ def execute_matrix(
                 call_budget,
                 seconds_budget,
             )
-            if not outer.reserve(job):
-                raise CampaignStopped("whole-task envelope cannot be reserved")
-            context = JobContext(job, outer, limiter)
+            context = reserve_context(outer, job, limiter, "whole-task envelope cannot be reserved")
             row.update(status="running", output=str(target))
             (out / "task-statuses.json").write_bytes(common._json(matrix))
             result = run_one(raw, row["system"], context, target)
@@ -1523,9 +1522,7 @@ def execute_matrix(
                 failure = json.loads((target / "failure.json").read_bytes())
                 row["completed_sessions"] = failure["completed_sessions"]
         finally:
-            if context is not None:
-                row["calls"] = context.calls
-                outer.release(context)
+            release_context(context, row)
             try:
                 row["spend"] = retained_spend(target, row["calls"])
             except Exception as exc:
@@ -2275,14 +2272,20 @@ def _travel_semantic_bridge(origin):
             _travel_normal_path(old, n) != _travel_normal_path(current, n) for n in normal
         ):
             raise ValueError("native actor/input/scorer normal-path semantic bridge differs")
-        old_memory, new_memory = old_source("arena_driver.py"), Path(formal.__file__).read_bytes()
+        import inspect
+
+        old_memory = old_source("arena_driver.py")
         classes = [
             "RawExperienceMemory",
             "GluoExperienceMemory",
             "ArenaProductionRouter",
             "BudgetedArenaEmbedder",
         ]
-        if any(definition(old_memory, n) != definition(new_memory, n) for n in classes):
+        if any(
+            definition(old_memory, n)
+            != definition(Path(inspect.getfile(getattr(formal, n))).read_bytes(), n)
+            for n in classes
+        ):
             raise ValueError("native memory/production/embedding semantics changed")
         projections = {
             n: hashlib.sha256(_travel_normal_path(old, n).encode()).hexdigest() for n in normal
