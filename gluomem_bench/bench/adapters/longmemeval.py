@@ -234,6 +234,7 @@ class LongMemEvalAdapter:
                     category=category,
                     category_name=CATEGORY_NAMES[category],
                     evidence=tuple(str(e) for e in raw.get("answer_session_ids", []) or []),
+                    question_date=str(raw["question_date"]) if raw.get("question_date") else None,
                 )
             )
         return samples

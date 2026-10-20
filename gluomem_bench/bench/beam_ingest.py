@@ -221,22 +221,66 @@ def _write_meta(path: Path, meta: dict):
     tmp.replace(path)
 
 
-def _ingest_conversation(cfg, adapter, db_dir, extractors, embedder, conv, completion_guard):
+def _failure_diagnostic(error, stage):
+    """Bounded static categories only; validation values/messages never persist."""
+    from pydantic import ValidationError
+    from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
+
+    result = {'category': safe_failure_diagnostic(error)['type'], 'stage': stage}
+    fields = frozenset(('claims', 'text', 'kind', 'confidence', 'event_date', 'verbatim_span',
+        'message_id', 'entities', 'relations', 'entity_type', 'name', 'properties', 'source',
+        'target', 'relation_type', 'decision', 'action', 'target_frame_id', 'rationale'))
+    types = frozenset(('literal_error', 'missing', 'datetime_from_date_parsing',
+        'datetime_parsing', 'datetime_type', 'string_type', 'list_type', 'dict_type',
+        'model_type', 'float_parsing', 'float_type', 'int_parsing', 'int_type',
+        'greater_than_equal', 'less_than_equal', 'value_error', 'extra_forbidden'))
+    pending, seen = [error], set()
+    for exc in pending:
+        if id(exc) in seen:
+            continue
+        seen.add(id(exc))
+        if len(seen) > 16:
+            break
+        if type(exc) is ValidationError:
+            rows = exc.errors(include_url=False, include_context=False, include_input=False)
+            result.update(category='validation-error', validation_errors=[{
+                'type': row['type'] if row['type'] in types else 'unknown',
+                'loc': [part if (type(part) is str and part in fields)
+                        or (type(part) is int and 0 <= part < 2**31) else 'unknown'
+                        for part in row['loc'][:8]],
+            } for row in rows[:16]])
+            break
+        pending.extend(v for v in (exc.__cause__, exc.__context__) if v is not None)
+    return result
+
+
+def _ingest_conversation(
+    cfg, adapter, db_dir, extractors, embedder, conv, completion_guard,
+    *, source_events=None, coverage_protocol=COVERAGE_PROTOCOL,
+):
+    from gluomem.llm.fake import NullExtractors
+
+    if extractors is None or isinstance(extractors, NullExtractors):
+        raise ValueError("production ingestion requires active extraction/consolidation")
     db_path = db_dir / f"{conv.conv_id}.mind"
     sentinel = db_dir / f"{conv.conv_id}.ingest.json"
     if db_path.exists() or sentinel.exists():
         raise FileExistsError(f"{db_path}: fresh ingestion required; no partial resume")
     started = time.perf_counter()
-    events = _events(conv)
+    events = _events(conv) if source_events is None else list(source_events)
     committed = []
     db = MindDB(db_path, dim=cfg.storage.vector_dim)
+    stage = 'store-setup'
     try:
         store = FrameStore(db, embedder=embedder, chunking=cfg.chunking, lifecycle=cfg.lifecycle)
         kg = KnowledgeGraph(db)
         for index, event in enumerate(events):
+            stage = 'completion-guard'
             if completion_guard is not None:
                 completion_guard()
+            stage = 'native-ingest'
             result = ingest_source_event(event, store=store, kg=kg, cfg=cfg, extractors=extractors)
+            stage = 'commit-coverage'
             observed, _ = _validate_rows(_read_rows(db_path), events[: index + 1])
             if (
                 result is None
@@ -249,15 +293,18 @@ def _ingest_conversation(cfg, adapter, db_dir, extractors, embedder, conv, compl
             if observed[:-1] != committed:
                 raise ValueError("changed prior source-event commit receipt")
             committed.append(observed[-1])
+            stage = 'completion-guard'
             if completion_guard is not None:
                 completion_guard()
+        stage = 'final-coverage'
         db.close()
         receipts, retention = _validate_rows(_read_rows(db_path), events)
         if receipts != committed:
             raise ValueError("changed committed source-event coverage")
+        stage = 'metadata'
         usage = getattr(extractors, "usage", None)
         meta = {
-            "coverage_protocol": COVERAGE_PROTOCOL,
+            "coverage_protocol": coverage_protocol,
             "committed_receipts": committed,
             **retention,
             "conv_id": conv.conv_id,
@@ -271,16 +318,19 @@ def _ingest_conversation(cfg, adapter, db_dir, extractors, embedder, conv, compl
             "seconds": time.perf_counter() - started,
             "usage": usage.snapshot() if usage is not None else {},
         }
+        stage = 'completion-guard'
         if completion_guard is not None:
             completion_guard()
+        stage = 'metadata-write'
         _write_meta(sentinel, meta)
     except Exception as exc:
         sentinel.unlink(missing_ok=True)
         failure = {
             "complete": False,
-            "coverage_protocol": COVERAGE_PROTOCOL,
+            "coverage_protocol": coverage_protocol,
             "conv_id": conv.conv_id,
-            "error": f"{type(exc).__name__}: {exc}",
+            "error": "production_source_event_failed",
+            "failure_diagnostic": _failure_diagnostic(exc, stage),
             "seconds": time.perf_counter() - started,
             "expected_events": len(events),
             "expected_messages": sum(len(e.messages) for e in events),
@@ -295,8 +345,13 @@ def _ingest_conversation(cfg, adapter, db_dir, extractors, embedder, conv, compl
                 redacted_events=sum(v == {} for v in payloads),
             )
         except Exception as diagnostic_exc:
-            failure["readback_error"] = f"{type(diagnostic_exc).__name__}: {diagnostic_exc}"
-        _write_meta(db_dir / f"{conv.conv_id}.ingest.failure.json", failure)
+            failure["readback_error"] = "source_event_readback_failed"
+            failure["readback_diagnostic"] = _failure_diagnostic(diagnostic_exc, "failure-readback")
+        try:
+            _write_meta(db_dir / f"{conv.conv_id}.ingest.failure.json", failure)
+        except Exception:
+            # Failure telemetry must not replace the initiating exception.
+            exc.__dict__['ingest_failure_receipt_persisted'] = False
         raise
     finally:
         db.close()

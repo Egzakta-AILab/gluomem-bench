@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import dotenv
+from pydantic import BaseModel, Field, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
+
 from gluomem.config.app_config import (
     ABSTAIN_SCORES,
     AbstainConfig,
@@ -49,8 +52,6 @@ from gluomem.config.app_config import (
 from gluomem.config.app_config import (
     AppConfig as CoreAppConfig,
 )
-from pydantic import BaseModel, Field, model_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 _BENCH_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -143,6 +144,10 @@ class BenchmarkMem0Config(BaseModel):
     embedder_model: str = "minilm"
     top_k: int | None = Field(default=None, ge=1)
     infer: bool = True
+    max_batch_input_tokens: int | None = Field(default=None, gt=0, strict=True)
+    clock_mode: Literal["native", "source"] = "native"
+    tokenizer_path: str | None = None
+    tokenizer_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class BenchmarkCiGateConfig(BaseModel):

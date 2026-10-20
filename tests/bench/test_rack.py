@@ -6,6 +6,103 @@ import httpx
 import pytest
 
 
+@pytest.mark.parametrize('temperature,max_tokens', [(0, 256), (0.1, 4096)])
+def test_v6_native_judge_parameters_are_explicit_and_wire_bound(tmp_path, temperature, max_tokens):
+    from gluomem_bench.bench.rack import RackClient, RackProfile
+    from gluomem_bench.bench.rack_trace import WorkloadBudget
+    budgets = dict(extraction=4096, consolidation=4096, reader=4096, judge=4096)
+    with pytest.raises(ValueError):
+        RackProfile(base_url='http://localhost:8000/v1', model='offline',
+                    profile_version='role-budgets-v5', generation_budgets=budgets)
+    profile = RackProfile(base_url='http://localhost:8000/v1', model='offline',
+                          profile_version='role-budgets-v6', generation_budgets=budgets)
+    sent = []
+    def serve(request):
+        body = json.loads(request.content)
+        sent.append(body)
+        if request.url.path == '/tokenize':
+            return httpx.Response(200, json={'count': 100})
+        return httpx.Response(200, json={'model': 'offline', 'choices': [
+            {'finish_reason': 'stop', 'message': {'content': 'yes'}}]})
+    client = RackClient(profile, receipt=tmp_path / 'calls.jsonl',
+        transport=httpx.MockTransport(serve), budget=WorkloadBudget(policy='role-budgets-v6'))
+    try:
+        client.generate_messages('rubric', [{'role': 'user', 'content': 'judge'}],
+                                 temperature=temperature, max_tokens=max_tokens)
+        assert sent[-1]['temperature'] == temperature
+        assert sent[-1]['max_tokens'] == max_tokens
+        client.generate_messages('answer', [{'role': 'user', 'content': 'read'}])
+        assert sent[-1]['temperature'] == 0 and sent[-1]['max_tokens'] == 4096
+        rows = [json.loads(line) for line in client.receipt.read_bytes().splitlines()]
+        assert rows[1]['request']['temperature'] == temperature
+        assert rows[1]['request']['max_tokens'] == max_tokens
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize('version,task,temp,tokens', [
+    ('role-budgets-v5', 'rubric', 0.1, 256),
+    ('role-budgets-v6', 'answer', 0.1, 256),
+    ('role-budgets-v6', 'rubric', 0.2, 256),
+    ('role-budgets-v6', 'rubric', 0.1, 4097),
+])
+def test_native_parameter_override_refusals_precede_any_network(tmp_path, version, task, temp, tokens):
+    from gluomem_bench.bench.rack import RackClient, RackProfile, FatalRackError
+    profile = RackProfile(base_url='http://localhost:8000/v1', model='offline',
+        profile_version=version, generation_budgets=dict(extraction=512, consolidation=512,
+        reader=4096, judge=1024 if version.endswith('v5') else 4096))
+    sent = []
+    client = RackClient(profile, receipt=tmp_path / 'calls.jsonl',
+        transport=httpx.MockTransport(lambda request: sent.append(request)))
+    try:
+        with pytest.raises(FatalRackError, match='native|override'):
+            client.generate_messages(task, [{'role': 'user', 'content': 'data'}],
+                                     temperature=temp, max_tokens=tokens)
+        assert not sent
+    finally:
+        client.close()
+
+
+def test_v6_explicit_long_timeout_reaches_transport(tmp_path):
+    from gluomem_bench.bench.rack import GenerationBudgets, RackClient, RackProfile
+
+    profile = RackProfile(
+        base_url='http://localhost:8000/v1', model='offline',
+        profile_version='role-budgets-v6', timeout_seconds=600,
+        generation_budgets=GenerationBudgets(extraction=4096, consolidation=2048,
+                                            reader=4096, judge=4096),
+    )
+    timeouts = []
+
+    def serve(request):
+        timeouts.append(request.extensions['timeout'])
+        return httpx.Response(200, json={'data': [{'id': 'offline'}]})
+
+    client = RackClient(profile, receipt=tmp_path / 'calls.jsonl',
+                        transport=httpx.MockTransport(serve))
+    try:
+        client.preflight()
+        assert timeouts[0]['read'] == 600
+    finally:
+        client.close()
+    with pytest.raises(ValueError):
+        RackProfile.model_validate({**profile.model_dump(), 'timeout_seconds': 601})
+
+
+@pytest.mark.parametrize('version', ['legacy-v1', 'role-budgets-v2',
+                                    'role-budgets-v4', 'role-budgets-v5'])
+def test_legacy_profiles_keep_120_second_request_ceiling(version):
+    from gluomem_bench.bench.rack import RackProfile
+
+    fields: dict[str, object] = dict(base_url='http://localhost:8000/v1', model='offline',
+                                     profile_version=version, timeout_seconds=121)
+    if version != 'legacy-v1':
+        fields['generation_budgets'] = dict(extraction=512, consolidation=512,
+                                           reader=512, judge=512)
+    with pytest.raises(ValueError):
+        RackProfile.model_validate(fields)
+
+
 def test_operator_profile_requires_explicit_endpoint_and_model():
     from gluomem_bench.bench.rack import RackProfile
 
@@ -20,6 +117,48 @@ def test_operator_profile_requires_explicit_endpoint_and_model():
     assert profile.model == "example/served-model"
     with pytest.raises(ValueError):
         profile.model = "other"  # pyrefly: ignore[read-only]
+
+
+@pytest.mark.parametrize('fault', ['transport', 'identity', 'tokenizer', 'tokenizer_schema', 'models_schema', 'truncation'])
+def test_v6_shared_faults_stop_campaign_but_truncation_only_latches_history(tmp_path, fault):
+    from gluomem_bench.bench.rack import RackClient, RackProfile
+    from gluomem_bench.bench.rack_trace import WorkloadBudget
+    from gluomem_bench.bench.parallel_campaign import CampaignBudget, JobContext, Job, RequestLimiter
+    campaign = CampaignBudget(max_calls=20, max_seconds=120)
+    context = JobContext(Job('j', 'h', tmp_path / 'j', 10, 60), campaign,
+        RequestLimiter(max_in_flight=1, max_in_flight_tokens=131072))
+    budget = WorkloadBudget(policy='role-budgets-v6', outer_budget=context)
+    profile = RackProfile(base_url='http://localhost:8000/v1', model='offline',
+        profile_version='role-budgets-v6', generation_budgets=dict(
+            extraction=4096, consolidation=4096, reader=4096, judge=4096))
+    def serve(request):
+        if fault == 'transport':
+            raise httpx.ConnectError('unavailable')
+        if request.url.path == '/tokenize':
+            if fault == 'tokenizer_schema':
+                return httpx.Response(200, json=[])
+            return httpx.Response(200, json={'count': None if fault == 'tokenizer' else 100})
+        if request.url.path == '/v1/models':
+            return httpx.Response(200, json={})
+        return httpx.Response(200, json={'model': 'other' if fault == 'identity' else 'offline',
+            'choices': [{'finish_reason': 'length' if fault == 'truncation' else 'stop',
+                         'message': {'content': 'answer'}}]})
+    client = RackClient(profile, receipt=tmp_path / 'calls.jsonl', budget=budget,
+        transport=httpx.MockTransport(serve))
+    try:
+        with pytest.raises(Exception):
+            if fault == 'models_schema':
+                client.preflight()
+            else:
+                client.generate_messages('answer', [{'role': 'user', 'content': 'question'}])
+        assert budget.failed is True
+        assert campaign.failed is (fault != 'truncation')
+        before = client.receipt.read_bytes()
+        with pytest.raises(Exception):
+            client.generate_messages('answer', [{'role': 'user', 'content': 'again'}])
+        assert client.receipt.read_bytes() == before
+    finally:
+        client.close()
 
 
 @pytest.mark.parametrize(
@@ -187,3 +326,18 @@ def test_rack_profile_is_exact_and_only_sends_bounded_structured_requests(tmp_pa
     assert receipt[-1]["elapsed_seconds"] >= 0
     with pytest.raises(ValueError, match="rack"):
         RackProfile(base_url="ftp://example.com/v1", model="example/served-model")
+
+
+def test_dataset_overrides_cannot_escape_controlled_rack_configuration(tmp_path, monkeypatch):
+    from gluomem_bench.bench.rack import RackProfile, controlled_config
+
+    profile = RackProfile(base_url="http://localhost:8000/v1", model="example/served-model")
+    cfg = controlled_config(profile, data=tmp_path / "source.json", sha256="a" * 64)
+    monkeypatch.setenv("GLUOMEM_DSPY__DEFAULT_MODEL", "haiku")
+    changed = cfg.with_overrides({"benchmark.answer.context_k": 10})
+    assert type(changed) is type(cfg)
+    assert changed.dspy.default_model == "rack-qwen"
+    assert changed.models == cfg.models
+    assert changed.dspy.tasks == cfg.dspy.tasks
+    assert changed.benchmark.answer.context_k == 10
+    assert changed.benchmark.datasets == cfg.benchmark.datasets

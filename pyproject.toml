@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 beam = ["pyarrow>=20"]
+cognee = ["cognee==1.6.5"]
 mem0 = [
     "mem0ai>=0.1",
 ]
@@ -22,7 +23,7 @@ embeddings = [
     "sentence-transformers>=3.0",
 ]
 all = [
-    "gluomem-bench[mem0,embeddings,beam]",
+    "gluomem-bench[mem0,cognee,embeddings,beam]",
 ]
 
 [project.scripts]
