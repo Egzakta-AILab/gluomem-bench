@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from gluomem_bench import extras
+from gluomem_bench.tracking import track_experiment
 from gluomem_bench.tune.candidate_cache import CandidateCache
 from gluomem_bench.tune.rescore import (
     ParamVector,
@@ -238,6 +239,7 @@ def _sample_param_vector(trial: Any, incumbent: ParamVector, space: TuneSpace) -
     )
 
 
+@track_experiment('retrieval_tuning', kind='condition')
 def run_optuna_tune(
     cache: CandidateCache,
     cfg: AppConfig,

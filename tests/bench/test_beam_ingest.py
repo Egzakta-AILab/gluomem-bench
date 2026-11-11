@@ -166,7 +166,7 @@ def test_real_production_adapter_length_failure_leaves_no_events_or_sentinel(
     )
     stores = tmp_path / "stores"
     try:
-        with pytest.raises(RuntimeError, match="incomplete"):
+        with pytest.raises(RuntimeError, match="structured extraction failed") as caught:
             ingest_beam(
                 cfg,
                 db_dir=stores,
@@ -174,6 +174,8 @@ def test_real_production_adapter_length_failure_leaves_no_events_or_sentinel(
                 embedder=mock_embedder,
                 completion_guard=budget.check,
             )
+        assert isinstance(caught.value.__cause__, ValueError)
+        assert "incomplete production response" in str(caught.value.__cause__)
         assert not (stores / "beam-1.ingest.json").exists()
         db = MindDB(stores / "beam-1.mind", dim=384)
         try:

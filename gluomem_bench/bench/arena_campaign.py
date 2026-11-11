@@ -41,6 +41,7 @@ from types import ModuleType, SimpleNamespace
 import httpx
 
 from gluomem_bench.bench.error_privacy import safe_error
+from gluomem_bench.tracking import track_experiment
 
 from .parallel_campaign import CampaignBudget, Job, JobContext, RequestLimiter
 from .rack import FatalRackError, RackClient, RackProfile, SharedRackError
@@ -635,6 +636,7 @@ class AuthoredExperienceMemory:
         pass
 
 
+@track_experiment('memoryarena_math', kind='condition')
 def run_math_task(
     task: ArenaTask,
     *,
@@ -863,6 +865,7 @@ def rescore(bundle):
     return metrics
 
 
+@track_experiment('memoryarena_math', kind='condition')
 def run_offline_smoke(*, native_root, out):
     """Two AUTHORED sessions; real native methods, fake HTTP at network boundary."""
     out = Path(out)

@@ -19,6 +19,7 @@ from gluomem_bench.config import AppConfig, load_config
 
 FIXTURE = str(Path(__file__).parent / "fixtures" / "locomo_tiny.json")
 _FAKES = {
+    "dspy.model": "mock",
     "embedding.model": "mock",
     "write.extraction_backend": "fake",
     "benchmark.answer.backend": "fake",
@@ -26,8 +27,8 @@ _FAKES = {
 }
 
 
-def test_benchmark_default_config_loads() -> None:
-    cfg = load_config()
+def test_benchmark_config_with_explicit_model_loads() -> None:
+    cfg = load_config(overrides={"dspy.model": "mock"})
     assert isinstance(cfg, AppConfig)
     assert "answer" in cfg.dspy.tasks
     assert cfg.benchmark.judge.family == "trio_strict"
@@ -43,7 +44,7 @@ def test_status_lists_every_extra() -> None:
 
 
 def test_fake_backends_require_allow_fake() -> None:
-    cfg = load_config().with_overrides(_FAKES)
+    cfg = load_config(overrides=_FAKES)
     for build in (make_embedder, make_extractors, _make_answer_fn, _make_judge_fns):
         with pytest.raises(FakeComponentError):
             build(cfg)
@@ -59,12 +60,13 @@ def test_benchmark_component_report(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(core_extras, "is_available", lambda _: True)
     secret = "sk-or-very-secret-value"
-    report = component_report(load_config(), env={"OPENROUTER_API_KEY": secret})
+    cfg = load_config(overrides={"dspy.model": "deepseek-flash"})
+    report = component_report(cfg, env={"OPENROUTER_API_KEY": secret})
     by_role = {c["role"]: c for c in report["components"]}
     assert "answer" in by_role
     assert "judge:haiku" in by_role
     assert report["ready"] is True
-    assert_ready(load_config(), env={"OPENROUTER_API_KEY": secret})
+    assert_ready(cfg, env={"OPENROUTER_API_KEY": secret})
 
 
 @pytest.mark.parametrize(
@@ -96,7 +98,7 @@ def test_benchmark_component_report(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_invalid_benchmark_config_overrides_fail_loudly(
     overrides: dict[str, object], match: str
 ) -> None:
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "mock"})
     with pytest.raises(ValidationError, match=match):
         cfg.with_overrides(overrides)
 
@@ -108,6 +110,8 @@ def test_cli_ingest_backend_none_e2e(tmp_path: Path, capsys) -> None:
             FIXTURE,
             "--db",
             str(tmp_path / "cli.mind"),
+            "--override",
+            "dspy.model=mock",
             "--override",
             "write.extraction_backend=none",
             "--override",
@@ -137,6 +141,8 @@ def test_cli_ingest_fake_backend_extracts(tmp_path: Path, capsys) -> None:
             "--db",
             str(tmp_path / "cli.mind"),
             "--override",
+            "dspy.model=mock",
+            "--override",
             "write.extraction_backend=fake",
             "--override",
             "embedding.model=mock",
@@ -149,9 +155,22 @@ def test_cli_ingest_fake_backend_extracts(tmp_path: Path, capsys) -> None:
 
 
 def test_cli_ingest_missing_file_fails(tmp_path: Path, capsys) -> None:
-    rc = main(["ingest", str(tmp_path / "nope.json"), "--db", str(tmp_path / "x.mind")])
+    rc = main(
+        [
+            "ingest",
+            str(tmp_path / "nope.json"),
+            "--db",
+            str(tmp_path / "x.mind"),
+            "--override",
+            "dspy.model=mock",
+            "--override",
+            "write.extraction_backend=none",
+        ]
+    )
     assert rc == 1
-    assert "gluomem ingest:" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "gluomem ingest:" in err
+    assert "nope.json" in err
 
 
 def test_cli_bench_requires_subcommand(capsys) -> None:

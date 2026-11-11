@@ -77,7 +77,11 @@ def test_live_backends_preflight_api_key_and_retriever_errors(
     run_cfg: AppConfig, bench_cfg: AppConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     live_cfg = bench_cfg.with_overrides(
-        {"benchmark.answer.backend": "dspy", "benchmark.judge.backend": "dspy"}
+        {
+            "dspy.model": "deepseek-flash",
+            "benchmark.answer.backend": "dspy",
+            "benchmark.judge.backend": "dspy",
+        }
     )
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     with pytest.raises(RuntimeError, match="OPENROUTER_API_KEY"):
@@ -371,7 +375,7 @@ def test_report_rendering_and_ci_gate() -> None:
     assert "Mem0" in report and "hive-mind" in report
     assert "| " not in report.split("Different-protocol citations")[1]
 
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "mock"})
     ok, entry = check_gate(entries, cfg.benchmark.ci_gate)
     assert ok is True and entry["value"] == 0.9
     strict_gate = cfg.with_overrides({"benchmark.ci_gate.min": 0.95}).benchmark.ci_gate
@@ -401,7 +405,7 @@ def test_live_answerer_and_trio_judges() -> None:
     from gluomem_bench.llm.answer import Answerer
     from gluomem_bench.llm.judge import QAJudge
 
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "deepseek-flash"})
     answerer = Answerer(cfg)
     result = answerer(
         "Where does Bob live now?",

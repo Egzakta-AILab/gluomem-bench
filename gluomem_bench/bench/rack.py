@@ -1,4 +1,4 @@
-"""Fail-closed, sequential OpenAI-compatible rack client; no provider router."""
+"""Fail-closed rack clients with versioned, explicit provider roles."""
 
 from __future__ import annotations
 
@@ -13,7 +13,26 @@ from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+
+from gluomem_bench.bench.rack_diagnostic import NativeDiagnosticPolicy
+from gluomem_bench.bench.rack_pricing import ProviderPricingPolicy
+from gluomem_bench.bench.rack_provider import (
+    ENDPOINT_VERSION,
+    POOL_VERSION,
+    PRODUCTION_PROVIDER_VERSIONS,
+    OpenRouterEndpoint,
+    OpenRouterPool,
+    estimated_prompt_tokens,
+    generation_options,
+    is_openrouter,
+    response_evidence,
+    response_model_matches,
+    validate_provider_profile,
+)
+from gluomem_bench.bench.rack_provider import (
+    VERSION as PROVIDER_VERSION,
+)
 
 
 class FatalRackError(ValueError):
@@ -55,18 +74,179 @@ class RackProfile(BaseModel):
     max_tokens: int = Field(default=512, ge=32, le=512)
     timeout_seconds: float = Field(default=60, ge=1, allow_inf_nan=False)
     max_input_chars: int = Field(default=24000, ge=1)
-    context_window: int = Field(default=131072, ge=131072, le=131072)
+    context_window: int = Field(default=131072, ge=131072, le=1050000)
     schema_reserve_tokens: int = Field(default=2048, ge=2048)
     profile_version: Literal[
-        "legacy-v1", "role-budgets-v2", "role-budgets-v4", "role-budgets-v5", "role-budgets-v6", "role-budgets-v7"
+        "legacy-v1", "role-budgets-v2", "role-budgets-v4", "role-budgets-v5",
+        "role-budgets-v6", "role-budgets-v7", "provider-roles-v8", "provider-roles-v9",
+        "provider-roles-v10", "provider-roles-v11", "observed-producer-v12", "observed-provider-v13"
     ] = "legacy-v1"
     max_generation_calls: int = Field(default=128, ge=1, le=16384)
     max_run_seconds: int = Field(default=900, ge=1, le=21600)
     generation_budgets: GenerationBudgets | ContextGenerationBudgets | None = None
+    provider: Literal["qwen-vllm", "openrouter-baidu-fp8", "openrouter"] | None = None
+    requested_model: str | None = Field(default=None, min_length=1, pattern=r"^\S+$")
+    api_key_env: str | None = Field(default=None, pattern=r"^[A-Z][A-Z0-9_]*$")
+    token_count_policy: Literal["served-tokenizer", "utf8-conservative-v1"] = "served-tokenizer"
+    judge_profile: RackProfile | None = None
+    production_json_transport: Literal["typed-text-json-v1"] | None = None
+    consolidation_contract: Literal["evolving-per-claim-v1"] | None = None
+    extraction_contract: Literal["strict-source-quotes-v1"] | None = None
+    writer_contract: (
+        Literal["bounded-writer-v2", "action-target-writer-v3", "semantic-state-writer-v4"] | None
+    ) = None
+    openrouter_endpoint: OpenRouterEndpoint | None = None
+    openrouter_pool: OpenRouterPool | None = None
+    native_diagnostic: NativeDiagnosticPolicy | None = None
+    native_schema_strict: bool | None = Field(default=None, strict=True)
+    pricing_policy: ProviderPricingPolicy | None = None
+    semantic_producer_contract: Literal[
+        "observed-assertion-date-v1", "observed-property-identity-v3", "observed-assertion-scope-v4"
+    ] | None = None
+    identity_output_tokens: int | None = Field(default=None, strict=True, ge=32)
+
+    @model_serializer(mode="wrap")
+    def _serialize_optional_transport(self, handler):
+        value = handler(self)
+        if self.production_json_transport is None:
+            value.pop("production_json_transport", None)
+        if self.consolidation_contract is None:
+            value.pop("consolidation_contract", None)
+        if self.extraction_contract is None:
+            value.pop("extraction_contract", None)
+        if self.writer_contract is None:
+            value.pop("writer_contract", None)
+        if self.openrouter_endpoint is None:
+            value.pop("openrouter_endpoint", None)
+        if self.openrouter_pool is None:
+            value.pop("openrouter_pool", None)
+        if self.native_diagnostic is None:
+            value.pop("native_diagnostic", None)
+        if self.native_schema_strict is None:
+            value.pop("native_schema_strict", None)
+        if self.pricing_policy is None:
+            value.pop("pricing_policy", None)
+        if self.semantic_producer_contract is None:
+            value.pop("semantic_producer_contract", None)
+        if self.identity_output_tokens is None:
+            value.pop("identity_output_tokens", None)
+        return value
 
     @model_validator(mode="after")
     def rack_only(self):
-        if self.profile_version == "role-budgets-v7":
+        observed_provider = self.profile_version == "observed-provider-v13"
+        observed = self.profile_version == "observed-producer-v12" or observed_provider
+        if observed_provider:
+            from gluomem_bench.bench.rack_observed_provider import validate_profile
+            validate_profile(self)
+        elif observed:
+            if (self.semantic_producer_contract != "observed-assertion-date-v1"
+                    or self.writer_contract != "semantic-state-writer-v4"
+                    or self.identity_output_tokens is None
+                    or self.provider != "qwen-vllm"
+                    or self.production_json_transport is not None
+                    or self.openrouter_endpoint is not None or self.openrouter_pool is not None
+                    or self.native_diagnostic is not None or self.native_schema_strict is not None
+                    or self.pricing_policy is not None):
+                raise ValueError(
+                    "observed producer v12 admits only its explicit Qwen native writer cell"
+                )
+            if self.identity_output_tokens + self.schema_reserve_tokens > self.context_window:
+                raise ValueError("identity output plus schema reserve must fit context window")
+        elif self.semantic_producer_contract is not None or self.identity_output_tokens is not None:
+            raise ValueError("legacy profiles cannot opt into the observed producer/budget")
+        if self.pricing_policy is not None and (
+                self.provider != "openrouter"
+                or self.profile_version not in {
+                    ENDPOINT_VERSION, POOL_VERSION, "provider-roles-v11", "observed-provider-v13"}):
+            raise ValueError("bounded pricing requires an explicit OpenRouter endpoint/pool")
+        if self.profile_version != "provider-roles-v11" and self.native_diagnostic is not None:
+            raise ValueError("legacy profile cannot opt into v11 diagnostic controls")
+        if self.native_schema_strict is not None and (
+            self.profile_version
+            not in {POOL_VERSION, "provider-roles-v11", "observed-provider-v13"}
+            or self.writer_contract not in {"action-target-writer-v3", "semantic-state-writer-v4"}
+            or self.production_json_transport is not None
+        ):
+            raise ValueError(
+                "native schema override requires an explicit v3 native diagnostic scope"
+            )
+        explicit_provider = self.profile_version in PRODUCTION_PROVIDER_VERSIONS or observed
+        if self.writer_contract is not None and (
+            not explicit_provider or self.extraction_contract != "strict-source-quotes-v1"
+            or self.consolidation_contract != "evolving-per-claim-v1"
+            or self.production_json_transport is not None
+        ):
+            raise ValueError("writer contract requires explicit strict native writer contracts")
+        if explicit_provider:
+            validate_provider_profile(self)
+            if (self.profile_version == POOL_VERSION or observed_provider
+                    and self.openrouter_pool is not None) and self.judge_profile is not None and (
+                    self.judge_profile.profile_version != POOL_VERSION
+                    or self.judge_profile.openrouter_pool != self.openrouter_pool
+                    or self.judge_profile.pricing_policy != self.pricing_policy
+                    or self.judge_profile.base_url != self.base_url
+                    or self.judge_profile.api_key_env != self.api_key_env):
+                raise ValueError(
+                    "writer/reader/judge must share the same exact pool and health contract"
+                )
+            if (observed_provider and self.openrouter_endpoint is not None
+                    and self.judge_profile is not None) and (
+                    self.judge_profile.profile_version != ENDPOINT_VERSION
+                    or self.judge_profile.openrouter_endpoint != self.openrouter_endpoint
+                    or self.judge_profile.pricing_policy != self.pricing_policy
+                    or self.judge_profile.base_url != self.base_url
+                    or self.judge_profile.api_key_env != self.api_key_env):
+                raise ValueError("v13 singleton judge must share the exact endpoint/price policy")
+            if self.judge_profile is not None and (
+                self.judge_profile.max_generation_calls != self.max_generation_calls
+                or self.judge_profile.max_run_seconds != self.max_run_seconds
+            ):
+                raise ValueError("role profiles must declare the same shared workload allowance")
+            if self.judge_profile is not None and (
+                (self.judge_profile.profile_version != PROVIDER_VERSION
+                 or self.judge_profile.provider != "openrouter-baidu-fp8")
+                and not (self.profile_version in {ENDPOINT_VERSION, "observed-provider-v13"}
+                         and self.judge_profile.profile_version == ENDPOINT_VERSION
+                         and self.judge_profile.provider == "openrouter")
+                and not (self.judge_profile.profile_version == POOL_VERSION
+                         and self.judge_profile.provider == "openrouter"
+                         and (self.profile_version in {POOL_VERSION, "provider-roles-v11",
+                             "observed-provider-v13"} or self.provider == "qwen-vllm"))
+            ):
+                raise ValueError("common judge requires a separately admitted provider profile")
+            if self.judge_profile is not None and (
+                self.judge_profile.judge_profile is not None
+                or self.judge_profile.consolidation_contract is not None
+                or self.judge_profile.extraction_contract is not None
+                or self.judge_profile.writer_contract is not None
+                or self.judge_profile.semantic_producer_contract is not None
+                or (
+                    self.profile_version == ENDPOINT_VERSION
+                    and self.judge_profile.production_json_transport is not None
+                )
+                or self.judge_profile.output_budget("rubric") != self.output_budget("rubric")
+            ):
+                raise ValueError(
+                    "common judge requires a flat exact DeepSeek profile with matching judge cap"
+                )
+        elif (
+            self.context_window != 131072
+            or self.provider is not None
+            or self.requested_model is not None
+            or self.api_key_env is not None
+            or self.token_count_policy != "served-tokenizer"
+            or self.judge_profile is not None
+            or self.production_json_transport is not None
+            or self.consolidation_contract is not None
+            or self.extraction_contract is not None
+            or self.openrouter_endpoint is not None
+            or self.openrouter_pool is not None
+        ):
+            raise ValueError(
+                "legacy profile cannot opt into provider fields or a different context"
+            )
+        if self.profile_version == "role-budgets-v7" or explicit_provider:
             if self.timeout_seconds > self.max_run_seconds:
                 raise ValueError("request timeout must fit whole-history budget")
             if self.generation_budgets is not None and any(
@@ -79,15 +259,20 @@ class RackProfile(BaseModel):
                 raise ValueError("legacy request timeout must be <=600 seconds")
             if self.generation_budgets is not None:
                 GenerationBudgets.model_validate(self.generation_budgets.model_dump())
-        if self.profile_version not in {"role-budgets-v6", "role-budgets-v7"} and self.timeout_seconds > 120:
+        if self.profile_version not in {"role-budgets-v6", "role-budgets-v7",
+                "observed-provider-v13", *PRODUCTION_PROVIDER_VERSIONS
+                } and self.timeout_seconds > 120:
             raise ValueError("legacy request timeout must be <=120 seconds")
-        if self.profile_version not in {"role-budgets-v5", "role-budgets-v6", "role-budgets-v7"} and (
+        if self.profile_version not in {"role-budgets-v5", "role-budgets-v6", "role-budgets-v7",
+                "observed-provider-v13", *PRODUCTION_PROVIDER_VERSIONS} and (
             self.max_generation_calls > 256 or self.max_run_seconds > 900
         ):
             raise ValueError("legacy workload bounds require <=256 calls and <=900 seconds")
         if (self.profile_version != "legacy-v1") != (self.generation_budgets is not None):
             raise ValueError("explicit role-budgets-v2 requires all generation_budgets")
-        if (self.profile_version not in {"role-budgets-v6", "role-budgets-v7"} and self.generation_budgets is not None
+        if (self.profile_version not in {"role-budgets-v6", "role-budgets-v7",
+                "observed-provider-v13", *PRODUCTION_PROVIDER_VERSIONS}
+                and self.generation_budgets is not None
                 and self.generation_budgets.judge > 1024):
             raise ValueError("legacy judge role budget must be <=1024")
         endpoint = urlsplit(self.base_url)
@@ -96,7 +281,7 @@ class RackProfile(BaseModel):
             or not endpoint.hostname
             or endpoint.username is not None
             or endpoint.password is not None
-            or endpoint.path != "/v1"
+            or endpoint.path != ("/api/v1" if is_openrouter(self) else "/v1")
             or endpoint.query
             or endpoint.fragment
             or any(char.isspace() for char in self.base_url)
@@ -107,6 +292,10 @@ class RackProfile(BaseModel):
         return self
 
     def output_budget(self, task: str) -> int:
+        if task == "identity_alignment":
+            if self.semantic_producer_contract is None or self.identity_output_tokens is None:
+                raise ValueError("identity task requires the explicit observed producer profile")
+            return self.identity_output_tokens
         if self.generation_budgets is None:
             return self.max_tokens
         if task == "answer":
@@ -166,26 +355,35 @@ def controlled_config(profile: RackProfile, *, data: Path, sha256: str, embedder
 
     from gluomem.config.app_config import _default_models
 
+    observed = profile.semantic_producer_contract is not None
+    explicit = profile.profile_version in PRODUCTION_PROVIDER_VERSIONS or observed
+    model_name = "rack-primary" if explicit else "rack-qwen"
     tasks = {
         name: {
-            "model": "rack-qwen",
+            "model": model_name,
             "module": "predict",
-            "temperature": 0,
+            "temperature": profile.native_diagnostic.temperature
+            if profile.native_diagnostic
+            else 0,
             "max_tokens": profile.output_budget(name),
         }
-        for name in _default_bench_dspy_tasks()
+        for name in (
+            *_default_bench_dspy_tasks(),
+            *(["rubric"] if explicit else []),
+            *(["identity_alignment"] if observed else []),
+        )
     }
     cfg = IsolatedConfig(
         models={
-            "rack-qwen": ModelEntry(
-                provider="openai",
+            model_name: ModelEntry(
+                provider="openrouter" if is_openrouter(profile) else "openai",
                 provider_model=f"openai/{profile.model}",
                 api_base=profile.base_url,
-                api_key_env="GLUOMEM_RACK_API_KEY",
+                api_key_env=profile.api_key_env or "GLUOMEM_RACK_API_KEY",
                 extra={
                     "timeout": profile.timeout_seconds,
                     "num_retries": 0,
-                    "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+                    "extra_body": generation_options(profile),
                 },
             ),
             "minilm": _default_models()["minilm"].model_copy(
@@ -196,25 +394,57 @@ def controlled_config(profile: RackProfile, *, data: Path, sha256: str, embedder
         embedding={"model": "minilm"},
         search={"rerank": {"enabled": False, "model": "minilm"}},
         dspy={
-            "default_model": "rack-qwen",
+            "model": model_name,
             "tasks": tasks,
             "adapter": "json",
+            "schema_mode": (
+                ("typed-text" if profile.production_json_transport else "required")
+                if explicit
+                else "auto"
+            ),
+            "schema_strict": (
+                profile.native_schema_strict
+                if profile.native_schema_strict is not None
+                else explicit
+                and not profile.production_json_transport
+                and profile.native_diagnostic is None
+            ),
             "cache": {"disk": False},
         },
         write={
+            **({"source_capture_policy": "attributed-interaction"} if explicit else {}),
+            **({"writer_contract": profile.writer_contract} if profile.writer_contract else {}),
+            **(
+                {"semantic_producer_contract": profile.semantic_producer_contract}
+                if observed
+                else {}
+            ),
             "parallelism": 1,
             "max_concurrent_llm": 1,
             "conv_parallelism": 1,
-            "contradiction": {"model": "rack-qwen"},
+            "contradiction": {"model": model_name},
         },
         benchmark={
             "parallelism": 1,
-            "judge": {"family": "single", "backbones": ["rack-qwen"]},
-            "mem0": {"model": "rack-qwen", "embedder_model": "minilm"},
+            "judge": {"family": "single", "backbones": [model_name]},
+            "mem0": {"model": model_name, "embedder_model": "minilm"},
             "datasets_dir": str(data.parent),
             "datasets": {"beam_128k": {"url": "", "file": data.name, "sha256": sha256}},
         },
     )
+    if profile.judge_profile is not None:
+        judge_cfg = controlled_config(profile.judge_profile, data=data, sha256=sha256)
+        cfg = cfg.with_overrides({
+            "models.rack-judge": judge_cfg.models["rack-primary"].model_dump(mode="json"),
+            "dspy.tasks.rubric.model": "rack-judge",
+            **({"dspy.tasks.rubric.temperature": judge_cfg.dspy.tasks["rubric"].temperature}
+               if profile.native_diagnostic is not None else {}),
+            "benchmark.judge.backbones": ["rack-judge"],
+        })
+    if (observed or profile.native_diagnostic is not None
+            or profile.profile_version == POOL_VERSION or profile.judge_profile is not None
+            and profile.judge_profile.profile_version == POOL_VERSION):
+        cfg = cfg.with_overrides({"dspy.retry.max_attempts": 1, "dspy.validation_retries": 0})
     if embedder is not None:
         recipe = embedder.recipe
         cfg = cfg.with_overrides({
@@ -343,15 +573,35 @@ class RackClient:
         self._failure: str | None = None
         self._failure_origin = None
         self._origin_receipt_failed = False
+        self._pricing_evidence = None
         self._client = httpx.Client(
             timeout=profile.timeout_seconds,
             transport=transport if transport is not None else _TransportOwner(profile),
             trust_env=False,
             follow_redirects=False,
         )
+        self._judge_client = None
+        if profile.judge_profile is not None:
+            if budget is None:
+                self._client.close()
+                raise ValueError("role clients require one shared workload budget")
+            self._judge_client = RackClient(
+                profile.judge_profile,
+                receipt=receipt.with_name(receipt.stem + "-judge" + receipt.suffix),
+                transport=transport,
+                budget=budget,
+            )
 
     def close(self):
-        self._client.close()
+        try:
+            if self._judge_client is not None:
+                self._judge_client.close()
+        finally:
+            self._client.close()
+
+    def client_for(self, task):
+        self.check()
+        return self._judge_client if task == "rubric" and self._judge_client is not None else self
 
     def generation_lease(self, tokens):
         """Hold the shared request/token allowance across actual dispatch."""
@@ -377,7 +627,12 @@ class RackClient:
             self._failure = json.dumps(self._failure_origin, sort_keys=True)
         if self.budget is not None:
             self.budget.failed = True
-            if self.profile.profile_version in {'role-budgets-v6', 'role-budgets-v7'} and (
+            if self.profile.profile_version == POOL_VERSION:
+                context = getattr(self.budget, "outer_budget", None)
+                if context is not None and hasattr(context, "job"):
+                    context.failed = True
+            if self.profile.profile_version in {'role-budgets-v6', 'role-budgets-v7',
+                    'observed-provider-v13', *PRODUCTION_PROVIDER_VERSIONS} and (
                     isinstance(exc, SharedRackError)
                     or getattr(exc, 'shared_failure', False)):
                 fail_shared = getattr(self.budget, 'fail_shared', None)
@@ -403,7 +658,9 @@ class RackClient:
                 # Persistence is not claimed; retain the initiating exception.
                 self._origin_receipt_failed = True
 
-    def _request(self, method: str, path: str, payload: dict | None = None):
+    def _request(
+        self, method: str, path: str, payload: dict | None = None, *, admitted_tokens=None
+    ):
         self.check()
         started = time.perf_counter()
         base = (
@@ -412,11 +669,21 @@ class RackClient:
             else self.profile.base_url
         )
         row: dict[str, Any] = {"method": method, "url": base + path, "request": payload}
+        if path == "/chat/completions" and self.profile.pricing_policy is not None:
+            row.update(self.pricing_fields())
         try:
             timeout = self.profile.timeout_seconds
             if self.budget is not None:
                 timeout = min(timeout, self.budget.remaining())
-            response = self._client.request(method, row["url"], json=payload, timeout=timeout)
+            headers = {}
+            if is_openrouter(self.profile) and path == "/chat/completions":
+                key = os.environ.get(self.profile.api_key_env or "")
+                if not key:
+                    raise FatalRackError("explicit provider credential environment is missing")
+                headers["Authorization"] = "Bearer " + key
+            response = self._client.request(
+                method, row["url"], json=payload, timeout=timeout, headers=headers
+            )
             row["status"] = response.status_code
             try:
                 row["response"] = response.json()
@@ -425,6 +692,9 @@ class RackClient:
                 response.raise_for_status()
                 raise ValueError("rack returned a non-JSON response") from None
             response.raise_for_status()
+            if path == "/chat/completions":
+                row.update(response_evidence(self.profile, row["response"], admitted_tokens,
+                                             output_budget=payload["max_tokens"]))
             return row["response"]
         except Exception as exc:
             # Discovery/tokenizer failures invalidate shared admission. A single
@@ -444,20 +714,80 @@ class RackClient:
             with self.receipt.open("a", encoding="utf-8") as stream:
                 stream.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    def preflight(self):
+    def preflight(self, *, admitted_endpoint_tags=None):
         try:
+            if is_openrouter(self.profile):
+                from gluomem_bench.bench.rack_provider import endpoint_discovery
+                response = self._request("GET", "/models/" + self.profile.model + "/endpoints")
+                if self.profile.pricing_policy is None:
+                    return endpoint_discovery(
+                        self.profile, response, admitted_endpoint_tags=admitted_endpoint_tags
+                    )
+                return self.bind_provider_metadata(
+                    response, admitted_endpoint_tags=admitted_endpoint_tags
+                )
             response = self._request("GET", "/models")
             if self.profile.model not in {row["id"] for row in response["data"]}:
                 raise SharedRackError("exact rack model is not served; refusing fallback")
             return response
         except Exception as exc:
-            if self.profile.profile_version in {'role-budgets-v6', 'role-budgets-v7'}:
+            if self.profile.profile_version in {
+                "role-budgets-v6",
+                "role-budgets-v7",
+                *PRODUCTION_PROVIDER_VERSIONS,
+            }:
                 exc.__dict__['shared_failure'] = True
             self._latch(exc)
             raise
 
+    def bind_provider_metadata(self, response, *, admitted_endpoint_tags=None):
+        """Bind an externally authenticated public snapshot, or one just fetched by preflight.
+
+        This performs the exact runtime gate without IO. Authentication/freshness
+        of supplied metadata and original root currency authority stay external.
+        """
+        from copy import deepcopy
+
+        from gluomem_bench.bench.rack_provider import endpoint_discovery
+        self.check()
+        try:
+            result = endpoint_discovery(
+                self.profile, response, admitted_endpoint_tags=admitted_endpoint_tags
+            )
+            if self.profile.pricing_policy is not None:
+                self._pricing_evidence = deepcopy({'protocol': 'bounded-provider-price-evidence@v1',
+                    'pricing_policy': result['pricing_policy'], 'provider_metadata': response,
+                    'pricing_observations': result['pricing_observations']})
+            return result
+        except Exception as exc:
+            self._pricing_evidence = None
+            self._latch(exc, stage='discovery')
+            raise
+
+    def pricing_fields(self, endpoint_tag=None):
+        """Copy quote evidence into the existing admission/attempt receipt, never a ledger."""
+        from copy import deepcopy
+
+        if self.profile.pricing_policy is None:
+            return {}
+        if self._pricing_evidence is None:
+            raise SharedRackError('bounded pricing preflight metadata required before generation')
+        fields = {'pricing_evidence': deepcopy(self._pricing_evidence)}
+        if endpoint_tag is None and self.profile.openrouter_pool is None:
+            endpoint_tag = self.profile.openrouter_endpoint.tag
+        if endpoint_tag is not None:
+            matches = [o for o in self._pricing_evidence['pricing_observations']
+                       if o['endpoint']['tag'] == endpoint_tag]
+            if len(matches) != 1:
+                raise SharedRackError('bounded pricing endpoint metadata observation missing')
+            fields['pricing_observation'] = deepcopy(matches[0])
+        return fields
+
     def prompt_token_count(self, messages: list[dict]) -> Any:
         """Count exact chat messages with the selected endpoint's served tokenizer."""
+        self.check()
+        if self.profile.token_count_policy == "utf8-conservative-v1":
+            return estimated_prompt_tokens(messages)
         try:
             tokens = self._request(
                 "POST",
@@ -470,12 +800,20 @@ class RackClient:
                 },
             ).get("count")
         except Exception as exc:
-            if self.profile.profile_version in {'role-budgets-v6', 'role-budgets-v7'}:
+            if self.profile.profile_version in {
+                "role-budgets-v6",
+                "role-budgets-v7",
+                *PRODUCTION_PROVIDER_VERSIONS,
+            }:
                 error = SharedRackError('unsupported context: served tokenizer unavailable')
                 self._latch(error)
                 raise error from exc
             raise ValueError("unsupported context: served tokenizer unavailable") from exc
-        if self.profile.profile_version in {'role-budgets-v6', 'role-budgets-v7'} and (type(tokens) is not int or tokens < 0):
+        if self.profile.profile_version in {
+            "role-budgets-v6",
+            "role-budgets-v7",
+            *PRODUCTION_PROVIDER_VERSIONS,
+        } and (type(tokens) is not int or tokens < 0):
             exc = SharedRackError('unsupported context: no actual served-tokenizer count')
             self._latch(exc)
             raise exc
@@ -485,6 +823,16 @@ class RackClient:
         """Reject unknown/overflowing context without truncating either input path."""
         if type(tokens) is not int or tokens < 0:
             raise ValueError("unsupported context: no actual served-tokenizer count")
+        if self.profile.pricing_policy is not None:
+            self.pricing_fields()
+            if (tokens > self.profile.pricing_policy.prompt_token_cap
+                    or output_budget > self.profile.pricing_policy.output_token_cap):
+                raise SharedRackError('bounded pricing prompt/output allowance exceeded')
+        if (
+            self.profile.native_diagnostic is not None
+            and tokens > self.profile.native_diagnostic.prompt_token_cap
+        ):
+            raise ValueError("diagnostic prompt allowance exceeded; unqualified price tier refused")
         if (
             tokens + output_budget + self.profile.schema_reserve_tokens
             > self.profile.context_window
@@ -510,17 +858,37 @@ class RackClient:
         Callers must validate judge yes/no verdicts separately and latch failures.
         """
         self.check()
+        role_client = self.client_for(task)
+        if role_client is not self:
+            return role_client.generate_messages(
+                task,
+                messages,
+                response_format=response_format,
+                top_p=top_p,
+                temperature=temperature,
+                max_tokens=max_tokens,
+            )
         try:
             if response_format not in (None, {"type": "json_object"}):
                 raise FatalRackError("unsupported native response format")
+            if self.profile.native_diagnostic is not None:
+                from gluomem_bench.bench.rack_diagnostic import validate_sampling_overrides
+                validate_sampling_overrides(self.profile, {k: v for k, v in (
+                    ("temperature", temperature), ("top_p", top_p)) if v is not None})
             if top_p is not None and top_p != 1.0:
                 raise FatalRackError("native top_p must preserve full support")
             output_budget = self.profile.output_budget(task)
             request_temperature = self.profile.temperature
             if temperature is not None or max_tokens is not None:
-                if (self.profile.profile_version not in {'role-budgets-v6', 'role-budgets-v7'} or task != 'rubric'
-                        or type(temperature) not in (int, float) or temperature not in (0, 0.1)
-                        or type(max_tokens) is not int or not 1 <= max_tokens <= output_budget):
+                if (
+                    self.profile.profile_version
+                    not in {"role-budgets-v6", "role-budgets-v7", *PRODUCTION_PROVIDER_VERSIONS}
+                    or task != "rubric"
+                    or type(temperature) not in (int, float)
+                    or temperature not in (0, 0.1)
+                    or type(max_tokens) is not int
+                    or not 1 <= max_tokens <= output_budget
+                ):
                     raise FatalRackError('unauthorized native judge parameter override')
                 output_budget = max_tokens
                 request_temperature = temperature
@@ -533,21 +901,21 @@ class RackClient:
                 "model": self.profile.model,
                 "temperature": request_temperature,
                 "max_tokens": output_budget,
-                "chat_template_kwargs": {"enable_thinking": False},
+                **generation_options(self.profile),
                 "messages": messages,
             }
             if response_format is not None:
                 payload["response_format"] = response_format
             if top_p is not None:
                 payload["top_p"] = top_p
-            with self.generation_lease(
-                tokens + output_budget + self.profile.schema_reserve_tokens
-            ):
-                if self.budget is not None:
-                    self.budget.begin_call()
-                response = self._request("POST", "/chat/completions", payload)
+            if self.profile.native_diagnostic is not None:
+                from gluomem_bench.bench.rack_diagnostic import sampling_options
+                payload.pop("temperature", None)
+                payload.pop("top_p", None)
+                payload.update(sampling_options(self.profile))
+            response = self._dispatch_generation(task, payload, tokens)
             self.check()
-            if response.get("model") != self.profile.model:
+            if not response_model_matches(self.profile, response.get("model")):
                 raise SharedRackError("response model differs from exact rack model")
             choices = response.get("choices", [])
             if len(choices) != 1 or choices[0].get("finish_reason") != "stop":
@@ -561,6 +929,10 @@ class RackClient:
                 "completion_tokens": usage.get("completion_tokens"),
                 "admitted_prompt_tokens": tokens,
                 "response": response,
+                **({"pool_call": self._last_pool_call}
+                   if self.profile.profile_version == POOL_VERSION or (
+                       self.profile.profile_version == "observed-provider-v13"
+                       and self.profile.openrouter_pool is not None) else {}),
             }
         except Exception as exc:
             self._latch(exc)
@@ -570,6 +942,9 @@ class RackClient:
 
     def complete(self, task: str, inputs: dict, properties: dict) -> dict:
         self.check()
+        role_client = self.client_for(task)
+        if role_client is not self:
+            return role_client.complete(task, inputs, properties)
         try:
             return self._complete(task, inputs, properties)
         except AnswerFormatError:
@@ -593,7 +968,7 @@ class RackClient:
             "model": self.profile.model,
             "temperature": self.profile.temperature,
             "max_tokens": output_budget,
-            "chat_template_kwargs": {"enable_thinking": False},
+            **generation_options(self.profile),
             "messages": [
                 {
                     "role": "system",
@@ -616,16 +991,18 @@ class RackClient:
             },
         }
         tokens = self.prompt_token_count(payload["messages"])
+        if self.profile.native_diagnostic is not None:
+            from gluomem_bench.bench.rack_diagnostic import sampling_options
+            payload.pop("temperature", None)
+            payload.update(sampling_options(self.profile))
+            payload["response_format"]["json_schema"]["strict"] = False
+        if self.profile.native_schema_strict is not None:
+            payload["response_format"]["json_schema"]["strict"] = self.profile.native_schema_strict
         self.admit_context(tokens, output_budget=output_budget, input_chars=len(content))
-        with self.generation_lease(
-            tokens + output_budget + self.profile.schema_reserve_tokens
-        ):
-            if self.budget is not None:
-                self.budget.begin_call()
-            response = self._request("POST", "/chat/completions", payload)
+        response = self._dispatch_generation(task, payload, tokens)
         if self.budget is not None:
             self.budget.check()
-        if response.get("model") != self.profile.model:
+        if not response_model_matches(self.profile, response.get("model")):
             raise SharedRackError("response model differs from exact rack model")
         choice = response["choices"][0]
         if choice.get("finish_reason") != "stop":
@@ -641,6 +1018,50 @@ class RackClient:
             if task == "answer":
                 raise AnswerFormatError(str(exc)) from exc
             raise FatalRackError(f"invalid judge response: {exc}") from exc
+
+    def _dispatch_generation(self, task, payload, tokens):
+        if (self.profile.profile_version == "observed-provider-v13"
+                and task not in {"answer", "rubric"}):
+            raise FatalRackError("unqualified v13 direct producer transport")
+        if not (self.profile.profile_version == POOL_VERSION or (
+                self.profile.profile_version == "observed-provider-v13"
+                and self.profile.openrouter_pool is not None)):
+            with self.generation_lease(
+                tokens + payload["max_tokens"] + self.profile.schema_reserve_tokens
+            ):
+                if self.budget is not None:
+                    self.budget.begin_call()
+                return self._request("POST", "/chat/completions", payload, admitted_tokens=tokens)
+        from gluomem_bench.bench.rack_pool import run_pool_call
+        self._last_pool_call = None
+        row = {"task": task, "messages": payload["messages"],
+               "output_budget": payload["max_tokens"]}
+        response, single = run_pool_call(self, task, tokens, payload["max_tokens"], row,
+            lambda profile, seconds, attempt: self._pool_direct_dispatch(
+                profile, seconds, attempt, payload, tokens))
+        row["response"] = response
+        row.update(response_evidence(single, response, tokens, output_budget=payload["max_tokens"]))
+        self._last_pool_call = row
+        return response
+
+    def _pool_direct_dispatch(self, profile, seconds, attempt, payload, tokens):
+        from gluomem_bench.bench.rack_pool import wire_record
+        request = {**payload, **generation_options(profile)}
+        key = os.environ.get(profile.api_key_env or "")
+        if not key:
+            raise FatalRackError("explicit provider credential environment is missing")
+        with httpx.Client(transport=httpx.HTTPTransport(trust_env=False, retries=0),
+                          trust_env=False, follow_redirects=False, timeout=seconds) as owned:
+            response = owned.post(profile.base_url + "/chat/completions", json=request,
+                                  headers={"Authorization": "Bearer " + key})
+            attempt["wire"] = wire_record(str(response.request.url), response.request.content,
+                response.status_code, response.content, response.headers.multi_items())
+            response.raise_for_status()
+            body = response.json()
+            attempt.update(response_evidence(
+                profile, body, tokens, output_budget=payload["max_tokens"]
+            ))
+            return body
 
     @staticmethod
     def _validate_result(content: str, properties: dict) -> dict:

@@ -23,6 +23,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 from gluomem_bench.bench.error_privacy import safe_error, safe_kind
+from gluomem_bench.tracking import track_experiment
 
 from . import arena_campaign as common
 from . import arena_driver as formal
@@ -800,6 +801,7 @@ def validate_submission(submission, converted):
                 raise ValueError("ordered native submission occurrence mismatch")
 
 
+@track_experiment('memoryarena_travel', kind='condition')
 def run_task(raw, *, source, client, memory, executor, out, max_steps, system):
     """Run ordered native person sessions, retaining full budget and failure evidence."""
     import time
@@ -1409,6 +1411,7 @@ def _check_finalization_deadline(budget):
         raise CampaignStopped("campaign finalization deadline exhausted")
 
 
+@track_experiment('memoryarena_travel', kind='campaign')
 def execute_matrix(
     rows,
     *,
@@ -1638,6 +1641,7 @@ def create_memory(system, *, spec, raw, client, budget, out, factories):
     )
 
 
+@track_experiment('memoryarena_travel', kind='campaign')
 def execute_approved(spec_path, approval_path):
     """The real full run entry point, not a CLI interface or qualification substitute."""
     import importlib.util
@@ -1958,6 +1962,7 @@ def verify_root(root, *, manifest_name="campaign-result.json", budget=None):
     }
 
 
+@track_experiment('memoryarena_travel', kind='condition')
 def smoke(*, native_root, readiness, tool_python, tool_helper, out):
     """Fixed authored two-person case, mocked HTTP, actual six local native tools."""
     import httpx
@@ -3008,6 +3013,7 @@ class FrozenTravelContinuationTask:
         return runtime
 
 
+@track_experiment('memoryarena_travel', kind='campaign')
 def execute_continuation(spec_path, approval_path, reserve_approval_path):
     """Execute only the approved original NEVER-RUN identities with the native driver.
 

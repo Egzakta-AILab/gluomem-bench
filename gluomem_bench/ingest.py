@@ -31,6 +31,8 @@ from gluomem.write.conversation import (
 )
 from gluomem.write.gate import make_scanner
 
+from gluomem_bench.tracking import track_experiment
+
 if TYPE_CHECKING:
     from gluomem.config.app_config import AppConfig
     from gluomem.embedding.base import Embedder
@@ -124,6 +126,7 @@ def load_locomo(path: str | Path) -> list[Conversation]:
     return conversations
 
 
+@track_experiment('ingest', kind='condition')
 def ingest_path(
     path: str | Path,
     cfg: AppConfig,

@@ -53,7 +53,7 @@ class Answerer:
         self._lm: dspy.BaseLM = lm
         self._module = build_answer_module(cfg)
         self._track_usage = cfg.dspy.track_usage
-        self.model = cfg.dspy.tasks[cfg.benchmark.answer.task].model
+        self.model = cfg.dspy.tasks[cfg.benchmark.answer.task].model or cfg.dspy.model
 
     def __call__(self, question: str, context: str) -> AnswerResult:
         with dspy.context(lm=self._lm, track_usage=self._track_usage):

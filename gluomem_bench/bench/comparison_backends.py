@@ -558,6 +558,7 @@ def _native_environment(settings: dict) -> None:
         "LLM_ARGS": json.dumps(
             {
                 "num_retries": 0,
+                "max_tokens": settings["max_completion_tokens"],
                 "timeout": settings.get("native_llm_timeout_seconds", 90),
                 "custom_llm_provider": "openai",
             }
@@ -573,6 +574,7 @@ def _native_environment(settings: dict) -> None:
         "EMBEDDING_BATCH_SIZE": "1",
         "EMBEDDING_MAX_CONCURRENT_DATA_POINTS": "1",
         "EMBEDDING_ENCODING_FORMAT": "float",
+        "EMBEDDING_INPUT_TYPE": "document",
         "DB_PROVIDER": "sqlite",
         "VECTOR_DB_PROVIDER": "lancedb",
         "GRAPH_DATABASE_PROVIDER": "ladybug",

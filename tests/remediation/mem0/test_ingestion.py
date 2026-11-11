@@ -30,7 +30,7 @@ def ingestion(tmp_path, monkeypatch):
     monkeypatch.setattr(mem0, '_installed_versions', lambda: {'mem0ai': '2.2.1'})
     calls = []
     state = NS(mode='healthy', closed=False, embedding_queries=[], constructions=0)
-    profile = NS(model='fixture/model', base_url='http://fixture.invalid/v1',
+    profile = NS(profile_version='legacy-v1', model='fixture/model', base_url='http://fixture.invalid/v1',
                  output_budget=lambda _: 64)
     budget = NS(calls=0, check=lambda: None)
     client = NS(profile=profile, check=lambda: None, _latch=lambda exc: None)

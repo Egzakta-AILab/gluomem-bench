@@ -22,6 +22,7 @@ from gluomem_bench.bench.registry import (
     protocol_id,
 )
 from gluomem_bench.config import AppConfig
+from gluomem_bench.tracking import track_experiment
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
 ADVERSARIAL_FIXTURES: dict[str, Path] = {
@@ -339,6 +340,7 @@ class AdversarialRunner:
             }
 
 
+@track_experiment('adversarial_fixture', kind='condition')
 def run_adversarial_fixture(
     cfg: AppConfig,
     *,

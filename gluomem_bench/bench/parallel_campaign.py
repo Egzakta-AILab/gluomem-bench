@@ -37,6 +37,7 @@ from pathlib import Path
 from threading import Condition, Event, RLock
 
 from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
+from gluomem_bench.tracking import submit_condition, track_experiment
 
 
 def guard_stopped(error, reason):
@@ -330,6 +331,7 @@ def _atomic_write(path, value):
     os.replace(temporary, path)
 
 
+@track_experiment("campaign", kind="campaign")
 def run_jobs(jobs, *, policy, out, run_job, cancel=None, clock=None, budget=None):
     """Run callable(job, context); no network clients are constructed here.
 
@@ -450,7 +452,7 @@ def run_jobs(jobs, *, policy, out, run_job, cancel=None, clock=None, budget=None
                 rows[index]["status"] = "running"
                 ctx = JobContext(job, budget, limiter, on_spend=record_spend, cancel=cancel)
                 save()
-                running[pool.submit(run_job, job, ctx)] = (index, ctx)
+                running[submit_condition(pool, run_job, job, ctx)] = (index, ctx)
             if running:
                 done, _ = wait(running, return_when=FIRST_COMPLETED)
                 for future in done:

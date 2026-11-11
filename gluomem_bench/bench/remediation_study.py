@@ -14,6 +14,8 @@ import sys
 import time
 from pathlib import Path
 
+from gluomem_bench.tracking import track_experiment
+
 if __name__ == '__main__' and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
@@ -542,6 +544,7 @@ def _publish(packet, plan, worker, qualification, native_report, budget):
     return report
 
 
+@track_experiment('longmemeval', kind='campaign')
 def execute(candidate_path, approval_path, *, budget):
     from contextlib import ExitStack
     from types import SimpleNamespace

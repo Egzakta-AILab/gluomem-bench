@@ -329,8 +329,10 @@ def test_worker_dependency_gate_executes_without_stdlib_shadowing(tmp_path):
 
     async def exercise():
         backend = cb.CogneeEvidenceBackend(_settings(tmp_path, python_executable=sys.executable))
-        with pytest.raises(RuntimeError, match="PackageNotFoundError"):
+        with pytest.raises(RuntimeError, match="categorical diagnostic") as caught:
             await backend.search("synthetic")
+        assert caught.value.native_diagnostic["stage"] == "init"
+        assert caught.value.native_diagnostic["causes"]
         assert backend.closed
         await backend.close()
 

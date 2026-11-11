@@ -71,6 +71,7 @@ from gluomem_bench.bench.types import (
 )
 from gluomem_bench.components import require_fake_allowed
 from gluomem_bench.llm.outputs import AnswerResult
+from gluomem_bench.tracking import track_experiment
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -119,7 +120,7 @@ def _make_answer_fn(cfg: AppConfig) -> AnswerFn:
     # Live path: preflight the key so a missing/empty env var fails here with
     # a named error instead of a provider 401 after ingest already ran.
     router = LMRouter(cfg)
-    router.assert_api_key(cfg.dspy.tasks[cfg.benchmark.answer.task].model)
+    router.assert_api_key(cfg.dspy.tasks[cfg.benchmark.answer.task].model or cfg.dspy.model)
     return Answerer(cfg, router=router)
 
 
@@ -376,6 +377,7 @@ def _prediction_row(s: Sample, p: Prediction) -> dict[str, Any]:
     }
 
 
+@track_experiment('qa', kind='condition')
 def run_benchmark(
     cfg: AppConfig,
     *,
@@ -538,7 +540,7 @@ def run_benchmark(
 
     # --- manifest ---------------------------------------------------------------
     answer_task = cfg.benchmark.answer.task
-    answer_model = cfg.dspy.tasks[answer_task].model
+    answer_model = cfg.dspy.tasks[answer_task].model or cfg.dspy.model
     answer_entry = cfg.models[answer_model]
     prompt_tokens = sum(p.prompt_tokens or 0 for p in predictions.values())
     completion_tokens = sum(p.completion_tokens or 0 for p in predictions.values())
@@ -651,6 +653,7 @@ def _ingest_sentinel(db_dir: Path, conv_id: str) -> Path:
     return db_dir / f"{conv_id}.ingest.json"
 
 
+@track_experiment('qa', kind='condition')
 def ingest_per_conversation(
     cfg: AppConfig,
     *,

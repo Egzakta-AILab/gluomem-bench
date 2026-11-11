@@ -29,7 +29,7 @@ class WriteEnv:
     """One in-memory-ish write environment over a tmp .mind file."""
 
     def __init__(self, tmp_path: Path) -> None:
-        self.cfg: AppConfig = load_config()
+        self.cfg: AppConfig = load_config(overrides={"dspy.model": "mock"})
         self.db = MindDB(tmp_path / "test.mind", dim=self.cfg.storage.vector_dim)
         self.store = FrameStore(
             self.db, embedder=MockEmbedder(dim=self.db.dim), chunking=self.cfg.chunking

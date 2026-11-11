@@ -22,6 +22,7 @@ from gluomem_bench.bench.mem0_input_policy import (
     verify_mem0_input_plan,
 )
 from gluomem_bench.bench.types import Prediction, RetrievedDoc, Sample
+from gluomem_bench.tracking import track_experiment
 
 if TYPE_CHECKING:
     from gluomem_bench.bench.rack import RackProfile
@@ -56,8 +57,9 @@ def _installed_versions() -> dict[str, str]:
 
 
 def _provider_model_id(slug: str) -> str:
-    if slug.startswith("openrouter/"):
-        return slug.removeprefix("openrouter/")
+    for prefix in ("openrouter/", "openai/"):
+        if slug.startswith(prefix):
+            return slug.removeprefix(prefix)
     return slug
 
 
@@ -70,6 +72,10 @@ def build_mem0_config(cfg: AppConfig, *, conv_dir: Path,
         "model": _provider_model_id(llm_entry.provider_model),
         "openrouter_base_url": llm_entry.api_base or _OPENROUTER_BASE_URL,
     }
+    if llm_entry.api_base:
+        # The native OpenAI SDK ignores openrouter_base_url without that
+        # provider's ambient key. Bind explicit compatible endpoints directly.
+        llm_cfg["openai_base_url"] = llm_entry.api_base
     if profile is None and llm_entry.api_key_env:
         api_key = os.environ.get(llm_entry.api_key_env)
         if api_key:
@@ -401,6 +407,8 @@ def ingest_guarded_mem0(cfg, *, conv, out: Path, client, budget, embedder=None,
     Malformed native output is retained but cannot publish completed QA evidence.
     """
     from gluomem_bench.bench.rack import FatalRackError
+    from gluomem_bench.bench.rack_provider import refuse_unqualified_endpoint_comparator
+    refuse_unqualified_endpoint_comparator(getattr(client, "profile", None))
 
     out = Path(out)
     temporal = mem0_temporal_contract(clock_mode)
@@ -665,6 +673,7 @@ def _memories_added(add_result: Any) -> int:
     return 0
 
 
+@track_experiment('qa', kind='condition')
 def ingest_mem0_per_conversation(
     cfg: AppConfig,
     *,

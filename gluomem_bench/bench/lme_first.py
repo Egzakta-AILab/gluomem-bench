@@ -18,6 +18,7 @@ from pathlib import Path
 from threading import Condition
 
 from gluomem_bench.bench.parallel_campaign import guard_stopped
+from gluomem_bench.tracking import submit_condition, track_experiment
 
 
 class DispatchStopped(RuntimeError):
@@ -336,6 +337,7 @@ def validate_plan(plan):
     return len(plan["jobs"])
 
 
+@track_experiment('longmemeval', kind='campaign')
 def run_isolated_jobs(
     records,
     *,
@@ -577,7 +579,7 @@ def run_isolated_jobs(
                         deadline=context.deadline,
                         started=budget.clock(),
                     )
-                    running[pool.submit(run_job, job, context)] = (index, context)
+                    running[submit_condition(pool, run_job, job, context)] = (index, context)
                 if running:
                     done, _ = wait(running, timeout=0.25, return_when=FIRST_COMPLETED)
                     for future in done:

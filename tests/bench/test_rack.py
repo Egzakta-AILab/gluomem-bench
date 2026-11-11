@@ -183,6 +183,7 @@ def test_controlled_config_routes_every_model_task_to_rack_and_ignores_env(tmp_p
     from gluomem_bench.bench.rack import RackProfile, controlled_config
 
     monkeypatch.setenv("GLUOMEM_DSPY__DEFAULT_MODEL", "haiku")
+    monkeypatch.setenv("GLUOMEM_DSPY__MODEL", "haiku")
     cfg = controlled_config(
         RackProfile(base_url="http://localhost:8000/v1", model="example/served-model"),
         data=tmp_path / "beam.json",
@@ -191,8 +192,8 @@ def test_controlled_config_routes_every_model_task_to_rack_and_ignores_env(tmp_p
     assert set(cfg.models) == {"rack-qwen", "minilm", "gliner_multi"}
     assert not cfg.safety.scanner.classifier.enabled
     assert all(task.model == "rack-qwen" for task in cfg.dspy.tasks.values())
-    assert cfg.dspy.default_model == "rack-qwen"
-    assert cfg.write.contradiction.model == "rack-qwen"
+    assert cfg.dspy.model == "rack-qwen"
+    assert cfg.dspy.tasks["contradiction"].model == "rack-qwen"
     assert cfg.write.parallelism == cfg.write.max_concurrent_llm == cfg.write.conv_parallelism == 1
     assert cfg.benchmark.parallelism == 1
     assert cfg.benchmark.judge.backbones == ["rack-qwen"]
@@ -334,9 +335,10 @@ def test_dataset_overrides_cannot_escape_controlled_rack_configuration(tmp_path,
     profile = RackProfile(base_url="http://localhost:8000/v1", model="example/served-model")
     cfg = controlled_config(profile, data=tmp_path / "source.json", sha256="a" * 64)
     monkeypatch.setenv("GLUOMEM_DSPY__DEFAULT_MODEL", "haiku")
+    monkeypatch.setenv("GLUOMEM_DSPY__MODEL", "haiku")
     changed = cfg.with_overrides({"benchmark.answer.context_k": 10})
     assert type(changed) is type(cfg)
-    assert changed.dspy.default_model == "rack-qwen"
+    assert changed.dspy.model == "rack-qwen"
     assert changed.models == cfg.models
     assert changed.dspy.tasks == cfg.dspy.tasks
     assert changed.benchmark.answer.context_k == 10

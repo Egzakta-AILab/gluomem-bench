@@ -21,6 +21,7 @@ from gluomem_bench.bench.artifacts import (
     verify_artifact_hashes,
 )
 from gluomem_bench.bench.error_privacy import safe_error, safe_kind
+from gluomem_bench.tracking import track_experiment
 
 PROTOCOL = "beam-bounded-history@v1"
 EVIDENCE_TOKENS = 4096
@@ -240,6 +241,7 @@ def _undated_chunks(adapter, chunk_chars=1000):
 def _undated_retriever(adapter, cfg, answer, system, embedder):
     """Reuse the existing raw backend/search/reader; only date-free input differs."""
     import asyncio
+
     from gluomem_bench.bench.comparison_backends import RawEvidenceBackend
     from gluomem_bench.bench.evidence_retriever import RawCampaignRetriever
     from gluomem_bench.bench.types import Prediction
@@ -269,6 +271,7 @@ def _undated_retriever(adapter, cfg, answer, system, embedder):
     return ChatControl()
 
 
+@track_experiment('beam', kind='condition')
 def run_history(
     *,
     adapter,
@@ -901,12 +904,13 @@ def _full_selections(data_dir):
 
 
 def full_dependency_preflight(spec, *, check_selection=True):
+    from scipy.stats import kendalltau
+
     from gluomem_bench.bench.beam_scoring import NativeBeam
     from gluomem_bench.bench.beam_suite import upstream_source_receipt
     from gluomem_bench.bench.embedding_runtime import EmbeddingRecipe
     from gluomem_bench.bench.parallel_campaign import CampaignPolicy
     from gluomem_bench.bench.rack import RackProfile
-    from scipy.stats import kendalltau
 
     del kendalltau
     upstream_source_receipt(Path(spec["upstream_dir"]))
@@ -1074,6 +1078,7 @@ def _publish_campaign(root, state, budget):
 def _campaign_summary(spec, state):
     """Native history-macro scores only for root-authorized complete conditions."""
     from collections import Counter
+
     from gluomem_bench.bench.beam_scoring import report
     records = {r["job_id"]: r for r in spec["jobs"]}
     bundles = []
@@ -1274,6 +1279,7 @@ def _execute_full(spec, spec_path, approval_path):
 def _execute_full_owned(spec, spec_path, approval_path, budget, continuation, state, ownership):
     """Already byte-admitted full matrix; failed attempts never authorize retry."""
     import os
+
     from gluomem_bench.bench.embedding_runtime import EmbeddingRecipe, RemoteEmbedder
     from gluomem_bench.bench.parallel_campaign import CampaignPolicy, Job, run_jobs
     from gluomem_bench.bench.rack import RackProfile, controlled_config
@@ -1357,6 +1363,7 @@ def _execute_full_owned(spec, spec_path, approval_path, budget, continuation, st
     return _publish_campaign(root, state, budget)
 
 
+@track_experiment('beam', kind='campaign')
 def execute(spec_path, approval_path):
     """Legacy bounded pilot or independently admitted all-tier matrix."""
     spec = verify_execution_spec(spec_path, approval_path)

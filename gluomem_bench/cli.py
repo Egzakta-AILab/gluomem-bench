@@ -11,7 +11,9 @@ Provides benchmark, dataset ingestion, and offline tuning/ablation commands:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
 from gluomem.cli import _open_existing_db, _parse_override
@@ -617,12 +619,48 @@ _BENCH_HANDLERS = {
 }
 
 
+@contextmanager
+def _tracking_cli_environment(args):
+    values = {}
+    if args.mlflow is not None:
+        values["GLUOMEM_MLFLOW_ENABLED"] = "1" if args.mlflow else "0"
+    if args.mlflow_tracking_uri is not None:
+        from gluomem_bench.tracking_server import validate_tracking_uri
+
+        values["GLUOMEM_MLFLOW_TRACKING_URI"] = validate_tracking_uri(args.mlflow_tracking_uri)
+    if args.mlflow_experiment is not None:
+        values["GLUOMEM_MLFLOW_EXPERIMENT"] = args.mlflow_experiment
+    previous = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="gluomem-bench",
         description="GluoMem — benchmark harness and offline tuner.",
     )
+    parser.add_argument(
+        "--mlflow",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="opt in to local MLflow; --no-mlflow preserves legacy execution",
+    )
+    parser.add_argument(
+        "--mlflow-tracking-uri", default=None, help="loopback HTTP URI or local SQLite URI"
+    )
+    parser.add_argument("--mlflow-experiment", default=None, help="local experiment name")
     sub = parser.add_subparsers(dest="command")
+    from gluomem_bench.tracking_server import add_commands
+
+    add_commands(sub.add_parser("tracking", help="launch/status/test local MLflow"))
 
     ingest = sub.add_parser("ingest", help="ingest a LoCoMo-format benchmark file into memory")
     ingest.add_argument("path", help="path to a LoCoMo-format JSON file")
@@ -654,7 +692,8 @@ def main(argv: list[str] | None = None) -> int:
     from gluomem.extras import MissingExtraError
 
     try:
-        return _dispatch(args, parser)
+        with _tracking_cli_environment(args):
+            return _dispatch(args, parser)
     except (
         MissingExtraError,
         ProviderUnavailableError,
@@ -666,6 +705,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _dispatch(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if args.command == "tracking":
+        from gluomem_bench.tracking_server import dispatch
+
+        return dispatch(args)
     if args.command is None:
         parser.print_help()
         return 0

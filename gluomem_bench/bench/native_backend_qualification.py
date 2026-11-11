@@ -4,6 +4,7 @@ Only explicit parent 192-call/1200-second/no-retry permit is accepted. Native
 algorithms are invoked via lme_first_execute.run_native_job in fresh processes.
 """
 from __future__ import annotations
+
 import hashlib
 import json
 import os
@@ -16,6 +17,8 @@ from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from gluomem_bench.tracking import track_experiment
 
 
 def validate_permit(permit):
@@ -144,10 +147,19 @@ class SocketBoundary:
 
 def worker(request_path):
     from types import SimpleNamespace
-    from gluomem_bench.bench.lme_first_execute import RemoteContext,effective_config,run_native_job
-    from gluomem_bench.bench.parallel_campaign import Job
-    from gluomem_bench.bench.embedding_runtime import RemoteEmbedder,EmbeddingRecipe,safe_failure_diagnostic
+
+    from gluomem_bench.bench.embedding_runtime import (
+        EmbeddingRecipe,
+        RemoteEmbedder,
+        safe_failure_diagnostic,
+    )
+    from gluomem_bench.bench.lme_first_execute import (
+        RemoteContext,
+        effective_config,
+        run_native_job,
+    )
     from gluomem_bench.bench.lme_projection import ExactLongMemEvalAdapter
+    from gluomem_bench.bench.parallel_campaign import Job
     path=Path(request_path);request=json.loads(path.read_bytes());plan=request['plan']
     context=RemoteContext(request['address'],bytes.fromhex(os.environ.pop('LME_RPC_KEY')),request['handle'],
                           Job(**request['job']),max_calls=192,max_seconds=1200)
@@ -189,12 +201,14 @@ def worker(request_path):
     return code
 
 
+@track_experiment('native_qualification', kind='condition')
 def run(*,plan_path,decision_path,fixture_plan_path,out,cognee_python):
-    from gluomem_bench.bench.parallel_campaign import CampaignBudget
-    from gluomem_bench.bench.lme_first import run_isolated_jobs,verify_journal
-    from gluomem_bench.bench.lme_first_execute import ContextBroker,process_tree_memory
-    from gluomem_bench.bench.rack import RackClient,RackProfile
     import httpx
+
+    from gluomem_bench.bench.lme_first import run_isolated_jobs, verify_journal
+    from gluomem_bench.bench.lme_first_execute import ContextBroker, process_tree_memory
+    from gluomem_bench.bench.parallel_campaign import CampaignBudget
+    from gluomem_bench.bench.rack import RackProfile
     budget=CampaignBudget(max_calls=192,max_seconds=1200)
     coordinator_before=process_tree_memory(os.getpid())
     decision=json.loads(Path(decision_path).read_bytes())

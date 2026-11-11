@@ -14,6 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+tracking-client = ["mlflow-skinny==3.17.2"]
+tracking = ["mlflow==3.17.2"]
 beam = ["pyarrow>=20"]
 cognee = ["cognee==1.6.5"]
 mem0 = [
@@ -23,11 +25,12 @@ embeddings = [
     "sentence-transformers>=3.0",
 ]
 all = [
-    "gluomem-bench[mem0,cognee,embeddings,beam]",
+    "gluomem-bench[mem0,cognee,embeddings,beam,tracking]",
 ]
 
 [project.scripts]
 gluomem-bench = "gluomem_bench.cli:main"
+gluomem-bench-mlflow = "gluomem_bench.tracking_server:main"
 
 [dependency-groups]
 dev = [

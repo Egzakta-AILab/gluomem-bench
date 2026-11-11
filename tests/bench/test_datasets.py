@@ -88,7 +88,9 @@ def _samples(category: int, n: int) -> list[Sample]:
 
 @pytest.fixture
 def locomo_cfg() -> AppConfig:
-    return load_config().with_overrides({"benchmark.datasets.locomo.sha256": FIXTURE_SHA})
+    return load_config(overrides={"dspy.model": "mock"}).with_overrides(
+        {"benchmark.datasets.locomo.sha256": FIXTURE_SHA}
+    )
 
 
 @pytest.fixture
@@ -98,7 +100,7 @@ def locomo_adapter(locomo_cfg: AppConfig) -> LoCoMoAdapter:
 
 @pytest.fixture
 def lme_cfg() -> AppConfig:
-    return load_config().with_overrides(
+    return load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "benchmark.datasets.longmemeval_s.file": LME_FIXTURE.name,
             "benchmark.datasets.longmemeval_s.sha256": LME_SHA,
@@ -229,7 +231,7 @@ def test_locomo_dia_bridges_match_ingested_raw_turns(
 def test_adapter_factory_and_longmemeval_parsing(
     lme_cfg: AppConfig, lme_adapter: LongMemEvalAdapter, tmp_path: Path
 ) -> None:
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "mock"})
     with pytest.raises(ValueError, match="locomo"):
         make_adapter("membench", cfg)
     assert make_adapter("locomo", cfg).name == "locomo"
@@ -336,7 +338,7 @@ def test_stratified_sampling_and_manifest_roundtrip(
 
 
 def test_benchmark_registry_contracts(bench_cfg: AppConfig, tmp_path: Path, capsys) -> None:
-    datasets = load_config().benchmark.datasets
+    datasets = load_config(overrides={"dspy.model": "mock"}).benchmark.datasets
     for entry in REGISTRY.values():
         assert entry.source_ancestry and entry.scorers and entry.capabilities
         assert entry.model_roles and entry.rights

@@ -85,6 +85,9 @@ def validate_mem0_evidence(out, inventory, profile, protocol, direct, *, expecte
             raise ValueError("invalid Mem0 extraction task/ordinal")
         request = trace["request"]
         wanted = dict(request, chat_template_kwargs={"enable_thinking": False})
+        if profile.profile_version == "provider-roles-v8":
+            from gluomem_bench.bench.rack_provider import generation_options
+            wanted = {**request, **generation_options(profile)}
         if (actual.get("status") != 200 or actual["request"] != wanted
                 or actual["response"] != trace["response"]
                 or request["model"] != profile.model or actual["response"]["model"] != profile.model
@@ -137,9 +140,27 @@ def validate_mem0_evidence(out, inventory, profile, protocol, direct, *, expecte
     return len(native)
 
 
+def validate_legacy_real_config(cfg, profile):
+    """Only schema-key compatibility: retain the legacy single-model/task/provider guards."""
+    dspy = cfg["dspy"]
+    present = [dspy[k] for k in ("model", "default_model") if k in dspy]
+    if not present or any(value != "rack-qwen" for value in present):
+        raise ValueError("ambiguous or nonisolated legacy model configuration")
+    if (cfg["components"]["allow_fake"]
+            or any(t["model"] != "rack-qwen" for t in dspy["tasks"].values())
+            or cfg["models"]["rack-qwen"]["provider_model"] != "openai/" + profile.model
+            or cfg["models"]["rack-qwen"]["api_base"] != profile.base_url):
+        raise ValueError("nonisolated or fake model configuration")
+
+
 def validate_bundle(out: Path, manifest: dict, *, expected=None, require_real=False,
                     judge_source: Path | None = None) -> dict:
     """Reject missing evidence, failed predictions, identity drift and lost calls."""
+    from gluomem_bench.bench.provider_study_evidence import HISTORY_PROTOCOLS
+    if manifest.get("protocol") in HISTORY_PROTOCOLS.values():
+        from gluomem_bench.bench.provider_study_evidence import validate_provider_bundle
+        return validate_provider_bundle(out, manifest, expected=expected,
+                                        require_real=require_real, judge_source=judge_source)
     out = Path(out).resolve()
     inventory = manifest.get("artifact_sha256", {})
     if not isinstance(inventory, dict) or not REQUIRED <= inventory.keys():
@@ -174,11 +195,7 @@ def validate_bundle(out: Path, manifest: dict, *, expected=None, require_real=Fa
         raise ValueError("profile differs from admitted configuration")
     cfg = _json(out / "effective-config.json")
     if require_real:
-        if (cfg["components"]["allow_fake"] or cfg["dspy"]["default_model"] != "rack-qwen"
-                or any(t["model"] != "rack-qwen" for t in cfg["dspy"]["tasks"].values())
-                or cfg["models"]["rack-qwen"]["provider_model"] != "openai/" + profile.model
-                or cfg["models"]["rack-qwen"]["api_base"] != profile.base_url):
-            raise ValueError("nonisolated or fake model configuration")
+        validate_legacy_real_config(cfg, profile)
     calls = _lines(out / "calls.jsonl")
     direct = [r for r in calls if r.get("method") == "POST"
               and r.get("url", "").endswith("/chat/completions")]
@@ -257,9 +274,12 @@ def validate_bundle(out: Path, manifest: dict, *, expected=None, require_real=Fa
         raise ValueError("production ordinal coverage differs")
     for row in generated:
         production_model = "openai/" + profile.model
-        if cfg.get("dspy", {}).get("schema_mode") == "required":
-            from gluomem_bench.bench.rack_schema import validate_native_projection, validate_schema_row
-            production_model = validate_schema_row(row, profile, cfg, protocol, expected)
+        if cfg.get("dspy", {}).get("schema_mode") in {"required", "typed-text"}:
+            from gluomem_bench.bench.rack_schema import (
+                validate_native_projection,
+                validate_production_row,
+            )
+            production_model = validate_production_row(row, profile, cfg, protocol, expected)
             validate_native_projection(row.get("response"), row.get("native_response", {}))
         if (row.get("error") or row.get("finish_reasons") != ["stop"]
                 or row.get("model") != production_model

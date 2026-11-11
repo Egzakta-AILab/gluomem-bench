@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gluomem_bench.tracking import track_experiment
+
 
 @dataclass(frozen=True)
 class V2Case:
@@ -146,6 +148,7 @@ class V2MemoryResult:
     context: Any
 
 
+@track_experiment('trajectory_bridge', kind='condition')
 def run_v2_memory(
     case: V2Case,
     memory: Any,
@@ -330,6 +333,7 @@ def _public_observation(domain: str, observation: Any) -> dict[str, Any]:
     return deepcopy({k: v for k, v in observation.items() if k in _OBSERVATION_FIELDS[domain]})
 
 
+@track_experiment('trajectory_bridge', kind='condition')
 def run_arena(
     task: ArenaTask,
     environment: Any,

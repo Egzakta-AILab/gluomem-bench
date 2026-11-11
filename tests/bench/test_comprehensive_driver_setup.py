@@ -16,9 +16,9 @@ def sha(path):
 
 
 @pytest.fixture
-def approved_setup(tmp_path, monkeypatch):
-    from gluomem_bench.bench import comprehensive_driver as d
-    assert Path(d.__file__).resolve().parents[3].name == 'runtime', 'setup fixtures require the test-only private overlay'
+def approved_setup(tmp_path, monkeypatch, authored_private_runtime):
+    d = authored_private_runtime
+    assert Path(d.__file__).resolve().parents[3].name == 'runtime'
     from gluomem_bench.bench.embedding_runtime import EmbeddingRecipe
     from gluomem_bench.bench.rack import RackProfile, GenerationBudgets
     from gluomem_bench.bench import upstream_scoring
@@ -72,7 +72,9 @@ def approved_setup(tmp_path, monkeypatch):
     spec_path = tmp_path/'spec.json'; spec_path.write_bytes(json.dumps(spec).encode())
     approval_path = tmp_path/'authored-approval.json'
     binding = spec['prior_resource_allowance']
-    approval_path.write_bytes(json.dumps(dict(approved=True, reviewer_kind='AI-assisted',spec_sha256=sha(spec_path),semantic_delta_manifest_sha256='a'*64,
+    approval_path.write_bytes(json.dumps(dict(approved=True, reviewer_kind='AI-assisted',
+        fixture_provenance='SYNTHETIC TEST ONLY; not operational execution authority',
+        spec_sha256=sha(spec_path),semantic_delta_manifest_sha256='a'*64,
         prior_resource_allowance_sha256=hashlib.sha256(json.dumps(binding,sort_keys=True,separators=(',',':')).encode()).hexdigest(),
         parent_reserve_approval_sha256=binding['parent_reserve_approval']['sha256'])).encode())
     for key, value in spec['execution_environment'].items():

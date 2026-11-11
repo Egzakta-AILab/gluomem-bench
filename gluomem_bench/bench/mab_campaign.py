@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 from gluomem_bench.bench.error_privacy import safe_error
 from gluomem_bench.bench.rack import FatalRackError, RackClient, SharedRackError
+from gluomem_bench.tracking import track_experiment
 
 PROTOCOL = 'mab-native-task-document-campaign@v1'
 FULL_MODE = 'full-campaign-v1'
@@ -424,6 +425,7 @@ def _ingest_mem0_documents(cfg, *, history, events, out, client, budget, embedde
     """Stock 2.2.1 source-string API; shared guard/encoder, no chat adapter."""
     import os
     from collections import Counter
+
     from gluomem_bench.bench import mem0 as native
     if (os.environ.get('MEM0_TELEMETRY') != 'False' or not os.environ.get('MEM0_DIR')
             or os.environ.get('OPENAI_API_KEY') or os.environ.get('OPENROUTER_API_KEY')):
@@ -536,6 +538,7 @@ def _ingest_mem0_documents(cfg, *, history, events, out, client, budget, embedde
 def _verify_mem0_coverage(out, history, events, profile, calls):
     """Reconcile persisted source attempts, guarded native calls and scoped ADDs."""
     from collections import Counter
+
     from gluomem_bench.bench.mem0 import inspect_native_extraction
     def read(name):
         return json.loads((out / name).read_bytes())
@@ -655,6 +658,7 @@ def score_prediction(scorer, case, prediction, *, client=None, judge_qualificati
     return score, tuple(judgments)
 
 
+@track_experiment('memoryagentbench', kind='condition')
 def run_history(*, suite, history_id, case_ids, cfg, profile, out, system,
                 embedder, outer_budget, authored=False, chunk_chars=4096,
                 judge_qualification=None, cognee_settings=None, cognee_admission=None,
@@ -698,11 +702,13 @@ def run_history(*, suite, history_id, case_ids, cfg, profile, out, system,
     if any(out.resolve().is_relative_to(root) for root in roots):
         raise ValueError('artifacts must be outside source repositories')
     from gluomem.llm.modules import DspyExtractors
+
     from gluomem_bench.bench.beam_ingest import _ingest_conversation
-    from gluomem_bench.bench.rack_trace import RackRouter, WorkloadBudget
-    from gluomem_bench.bench.retriever import GluoMemRetriever
+
     # Retain a debit even when JobContext's coordination persistence fails.
     from gluomem_bench.bench.cognee_retriever import NativeWorkloadBudget
+    from gluomem_bench.bench.rack_trace import RackRouter, WorkloadBudget
+    from gluomem_bench.bench.retriever import GluoMemRetriever
     budget = NativeWorkloadBudget(max_calls=profile.max_generation_calls,
                             max_seconds=profile.max_run_seconds,
                             policy=profile.profile_version, outer_budget=outer_budget)
@@ -1008,6 +1014,7 @@ def _verify_cognee_rendered_context(native_root, contexts, *, python_executable,
     import os
     import subprocess
     import tempfile
+
     from gluomem_bench.bench.cognee_graph import NATIVE_SOURCE_PINS
     program = r'''
 import asyncio, hashlib, importlib.metadata, json, sys
@@ -1148,8 +1155,15 @@ def _verify_cognee_lineage(native_root, provenance, coverage):
 
 def _verify_cognee(out, history, events, cases, rows, profile, protocol):
     """Closed native inventory, exact source processing and graph/reader binding."""
-    from gluomem_bench.bench.cognee_campaign import verify_native_coverage, verify_generation_evidence
-    from gluomem_bench.bench.cognee_graph import GRAPH_CONDITION, NATIVE_SOURCE_PINS, graph_context_evidence
+    from gluomem_bench.bench.cognee_campaign import (
+        verify_generation_evidence,
+        verify_native_coverage,
+    )
+    from gluomem_bench.bench.cognee_graph import (
+        GRAPH_CONDITION,
+        NATIVE_SOURCE_PINS,
+        graph_context_evidence,
+    )
     from gluomem_bench.bench.comparison_backends import COGNEE_WHEEL_SHA256, Evidence
     native_out = out / 'graph'
     def read(name):
@@ -1243,7 +1257,8 @@ def _verify_payload(out, result):
             or [r['case_id'] for r in rows] != result['case_ids']):
         raise ValueError('incomplete question occurrence coverage')
     from gluomem.write.events import SourceEvent
-    from gluomem_bench.bench.mab_suite import MABCase, MABHistory, MABSuite, JudgeResponse
+
+    from gluomem_bench.bench.mab_suite import JudgeResponse, MABCase, MABHistory, MABSuite
     from gluomem_bench.bench.types import Sample
     protocol = json.loads((out / 'protocol.json').read_bytes())
     cases = [MABCase(**{**c, 'sample': Sample(**c['sample']), 'answers': tuple(c['answers'])})
@@ -1423,6 +1438,7 @@ def _verify_payload(out, result):
 def required_files(mab_root):
     """First-party deferred producer closure + locks + every pinned upstream byte."""
     import gluomem
+
     from gluomem_bench.bench.mab_suite import PINNED_FILES
     bench = Path(__file__).resolve().parents[1]
     core = Path(gluomem.__file__).resolve().parent
@@ -1496,6 +1512,7 @@ def _qualify_cognee_spec(spec, approval, suite):
     return entry
 
 
+@track_experiment('memoryagentbench', kind='campaign')
 def execute(spec_path, approval_path):
     """Own one clock/counter from before admission/setup through final readback."""
     from gluomem_bench.bench.parallel_campaign import CampaignBudget

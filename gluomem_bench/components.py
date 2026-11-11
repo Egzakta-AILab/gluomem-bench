@@ -47,11 +47,14 @@ def component_statuses(
             continue
         statuses.append(
             _llm_status(
-                cfg, f"extraction:{task}", cfg.write.extraction_backend, task_cfg.model, env
+                cfg, f"extraction:{task}", cfg.write.extraction_backend,
+                task_cfg.model or cfg.dspy.model, env
             )
         )
     statuses.append(
-        _llm_status(cfg, "answer", answer.backend, cfg.dspy.tasks[answer.task].model, env)
+        _llm_status(
+            cfg, "answer", answer.backend, cfg.dspy.tasks[answer.task].model or cfg.dspy.model, env
+        )
     )
     for backbone in cfg.benchmark.judge.backbones:
         statuses.append(

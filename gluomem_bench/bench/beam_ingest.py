@@ -22,6 +22,7 @@ from gluomem.storage.db import MindDB
 from gluomem.write.events import SourceEvent, SourceEventMessage, ingest_source_event
 
 from gluomem_bench.bench.adapters.beam import BeamAdapter
+from gluomem_bench.tracking import track_experiment
 
 if TYPE_CHECKING:
     from gluomem.embedding.base import Embedder
@@ -185,6 +186,7 @@ def select_fresh_beam_ingest(
     return adapter, conversations
 
 
+@track_experiment('beam', kind='condition')
 def ingest_beam(
     cfg: AppConfig,
     *,
@@ -224,6 +226,7 @@ def _write_meta(path: Path, meta: dict):
 def _failure_diagnostic(error, stage):
     """Bounded static categories only; validation values/messages never persist."""
     from pydantic import ValidationError
+
     from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
 
     result = {'category': safe_failure_diagnostic(error)['type'], 'stage': stage}

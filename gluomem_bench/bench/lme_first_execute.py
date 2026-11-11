@@ -17,13 +17,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+from gluomem_bench.tracking import track_experiment
+
 # Absolute -I worker launch: never import neighboring bench/types.py as stdlib.
 if __name__ == '__main__' and not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from gluomem_bench.bench.lme_first import DispatchStopped, json_bytes, read_bound
 from gluomem_bench.bench.lme_resource_lifecycle import ResourceFailure, discover_members, monitor
-
 
 # Serialize preparation, not native histories or generation leases. Large bound
 # candidate/plan inventories are released before the next history prepares.
@@ -751,6 +752,7 @@ def _main(argv=None):
     return 0 if args.command=='freeze' or result.get('quality_complete') is True else 2
 
 
+@track_experiment('longmemeval', kind='condition')
 def run_native_job(*, job, context, cfg, adapter, sample, profile, judge_source,
                    embedder, cognee_settings=None, transport=None, require_real=True):
     """Concrete native factories and unchanged common reader + native scorer.
@@ -779,6 +781,7 @@ def verify_native_job(*, job, context, cfg, adapter, sample, profile, judge_sour
                       require_real=True):
     """Independent full native leaf checks; no callback success can certify QA."""
     from dataclasses import asdict
+
     from gluomem_bench.bench.suite_campaign import verify_history
     if job.system == 'cognee':
         from gluomem_bench.bench.cognee_driver import reconcile_job
@@ -795,6 +798,7 @@ def verify_native_job(*, job, context, cfg, adapter, sample, profile, judge_sour
     verification = {}
     if job.system == 'mem0':
         from mem0.configs.prompts import ADDITIVE_EXTRACTION_PROMPT
+
         from gluomem_bench.bench.mem0 import _mem0_digest, _session_messages, mem0_adapted_binding
         conv = next(c for c in adapter.conversations() if c.conv_id == sample.conv_id)
         adapted = cfg.benchmark.mem0.max_batch_input_tokens is not None
@@ -1277,7 +1281,7 @@ def worker_main(request_path, *, shared_group=None):
                 adapter,sample = restore_input(request['input'],plan)
                 native_job = SimpleNamespace(**request['job'],system=request['system'])
                 native_job.output = Path(native_job.output)
-                from gluomem_bench.bench.embedding_runtime import RemoteEmbedder, EmbeddingRecipe
+                from gluomem_bench.bench.embedding_runtime import EmbeddingRecipe, RemoteEmbedder
                 embedder = RemoteEmbedder(plan['embedding_url'],recipe=EmbeddingRecipe(**plan['embedding_recipe']))
                 settings = None
                 if request['system'] == 'cognee':
@@ -1366,7 +1370,9 @@ def effective_config(plan):
 
 def restore_input(binding,plan):
     from datetime import datetime
+
     from gluomem.write.conversation import Conversation, Session, Turn
+
     from gluomem_bench.bench.types import Sample
     data = json.loads(read_bound(binding['path'],binding['sha256']))
     value = data['sample']
@@ -1499,9 +1505,9 @@ def validate_shared_qualification(binding, *, commit_limit_mib, host_reserve_mib
     qualification and independent exact-byte campaign review. Configured worker
     capacity is intentionally NOT inferred from the authored observed overlap.
     """
-    from gluomem_bench.bench.lme_first import verify_journal
     import gluomem_bench.bench.lme_first as coordinator
     import gluomem_bench.bench.rack_trace as rack_boundary
+    from gluomem_bench.bench.lme_first import verify_journal
     packet = json.loads(read_bound(**_binding_args(binding)))
     if (packet.get('protocol') != 'lme-first-shared-gluomem@v1'
         or packet.get('executor',{}).get('sha256') != bound(__file__)['sha256']
@@ -1741,6 +1747,7 @@ def native_records(candidate,plan,qualification):
 def build_input_cache(root,plan,budget):
     """Construct exact projection ONCE; lightweight workers open only their row."""
     from dataclasses import asdict
+
     from gluomem_bench.bench.lme_projection import ExactLongMemEvalAdapter
     cfg,_ = effective_config(plan)
     adapter = ExactLongMemEvalAdapter(cfg,plan['dataset']['name'])
@@ -1769,6 +1776,7 @@ def build_input_cache(root,plan,budget):
 def verify_input_cache(root,plan,inputs,*,budget=None):
     """Reconstruct from source; self-rehashed cached question/gold/history is not truth."""
     from dataclasses import asdict
+
     from gluomem_bench.bench.lme_projection import ExactLongMemEvalAdapter
     cfg,_ = effective_config(plan)
     adapter = ExactLongMemEvalAdapter(cfg,plan['dataset']['name'])
@@ -1914,7 +1922,9 @@ def freeze_candidate(*, plan_path, plan_sha256, budget_decision_path, budget_dec
         raise ValueError('explicit supported native isolation mode required')
     import shutil
     import subprocess
+
     import gluomem
+
     from gluomem_bench.bench.comprehensive_driver import frozen_inventory
     from gluomem_bench.bench.lme_first import validate_plan
     plan = json.loads(read_bound(plan_path,plan_sha256))
@@ -1989,6 +1999,7 @@ def freeze_candidate(*, plan_path, plan_sha256, budget_decision_path, budget_dec
     return bound(out)
 
 
+@track_experiment('longmemeval', kind='condition')
 def run_authored_qualification(*, plan_path, plan_sha256, budget_decision_path,
         budget_decision_sha256, source_path, out, cognee_python, host_reserve_mib,
         history_commit_limit_mib=None, post_recovery_permit_path=None,
@@ -2008,6 +2019,7 @@ def run_authored_qualification(*, plan_path, plan_sha256, budget_decision_path,
         if budget.max_calls != 192 or budget.max_seconds != 1200:
             raise ValueError('qualification budget must retain declared bounded caps')
     import copy
+
     from gluomem_bench.bench.lme_first import run_isolated_jobs
     from gluomem_bench.bench.parallel_campaign import CampaignBudget
     plan = json.loads(read_bound(plan_path,plan_sha256))
@@ -2117,6 +2129,7 @@ def run_authored_qualification(*, plan_path, plan_sha256, budget_decision_path,
     return report
 
 
+@track_experiment('longmemeval', kind='campaign')
 def execute_candidate(candidate_path, approval_path):
     from gluomem_bench.bench.lme_first import run_isolated_jobs
     from gluomem_bench.bench.parallel_campaign import CampaignBudget
