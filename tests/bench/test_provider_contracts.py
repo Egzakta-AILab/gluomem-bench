@@ -270,6 +270,151 @@ def test_price_tiers_and_cache_write_require_explicit_version():
         validate_prices(policy, {**price, "unknown_fee": "0"})
 
 
+def authored_failed_study(root):
+    """Full V8 root with pinned native input and a failed, charged attempt."""
+    from hashlib import sha256
+
+    from gluomem_bench.bench import provider_study as study
+
+    def save(name, value):
+        raw = json.dumps(value).encode()
+        (root / name).write_bytes(raw)
+        return sha256(raw).hexdigest()
+
+    dataset_hash = save(
+        "dataset.json",
+        [
+            {
+                "question_id": "authored-history",
+                "question_type": "single-session-user",
+                "question": "What is the beacon code?",
+                "answer": "C2",
+                "question_date": "2026/01/04 (Sun) 00:00",
+                "haystack_dates": ["2026/01/03 (Sat) 00:00"],
+                "haystack_session_ids": ["s1"],
+                "answer_session_ids": ["s1"],
+                "haystack_sessions": [[{"role": "user", "content": "The beacon code is C2."}]],
+            }
+        ],
+    )
+    judge_hash = save("judge.json", {"authored": True})
+    spec = {
+        "protocol": study.PROTOCOL,
+        "unsupported_cells": study.UNSUPPORTED,
+        "dataset": {"path": "dataset.json", "sha256": dataset_hash},
+        "judge_source": "judge.json",
+        "embedding_recipe": None,
+        "config_overrides": {},
+        "profiles": {
+            "qwen": qwen_profile(
+                "http://fixture.invalid", judge_profile=deepseek_profile("http://fixture.invalid")
+            ).model_dump(mode="json")
+        },
+        "jobs": [
+            {
+                "job_id": "authored-job",
+                "system": "no_memory",
+                "sample_id": "authored-history",
+                "track": "qwen",
+            }
+        ],
+        "authority": {"max_rate_per_million": "1", "max_usd": "1"},
+    }
+    spec_hash = save("execution-spec.json", spec)
+    save("independent-approval.json", {"spec_sha256": spec_hash, "approved": True})
+    currency = study.CurrencyReservations(
+        max_usd="1",
+        max_rate_per_million="1",
+        receipt=root / "currency.jsonl",
+    )
+    reservation = currency.reserve(1000, "authored-job")
+    currency.append(
+        {
+            "kind": "dispatch-intent",
+            "reservation_id": reservation["reservation_id"],
+            "job_id": "authored-job",
+            "call_ordinal": 1,
+            "campaign_call_ordinal": 1,
+            "reserved_usd": reservation["reserved_usd"],
+        }
+    )
+    # A lease abandoned before dispatch remains a conservative debit.
+    currency.reserve(2000, "authored-job")
+    result = {
+        "protocol": study.PROTOCOL,
+        "spec_sha256": spec_hash,
+        "publication": "verified",
+        "unsupported_cells": study.UNSUPPORTED,
+        "complete": False,
+        "frozen_inputs": [
+            {"path": name, "snapshot": name, "sha256": digest}
+            for name, digest in [("dataset.json", dataset_hash), ("judge.json", judge_hash)]
+        ],
+        "jobs": [{"job_id": "authored-job", "status": "failed", "calls": 1, "artifact_sha256": {}}],
+        "accounting": {"calls": 1},
+        "currency": currency.snapshot(),
+    }
+    save("root-status.json", result)
+    return study, result
+
+
+@pytest.mark.parametrize("fault", [None, "missing", "late", "duplicate", "job", "amount", "tokens"])
+def test_root_reconciles_dispatch_with_preceding_reservation(tmp_path, fault):
+    study, result = authored_failed_study(tmp_path)
+    assert study.verify_root(tmp_path) == result
+    path = tmp_path / "currency.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    if fault is None:
+        assert result["currency"]["reserved_usd"] == "0.003"
+        return
+    if fault == "missing":
+        rows = [rows[1]]
+        result["currency"].update(reserved_usd="0", reservations=0)
+    elif fault == "late":
+        rows[0], rows[1] = rows[1], rows[0]
+    elif fault == "duplicate":
+        rows.insert(1, copy.deepcopy(rows[0]))
+    elif fault == "job":
+        rows[1]["job_id"] = "other-job"
+    elif fault == "amount":
+        rows[1]["reserved_usd"] = "0"
+    else:
+        rows[1]["tokens"] = rows[0]["tokens"] + 1
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (tmp_path / "root-status.json").write_text(json.dumps(result))
+    with pytest.raises(ValueError, match="reservation"):
+        study.verify_root(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("reservation_id", True),
+        ("reservation_id", 1.0),
+        ("tokens", 0),
+        ("tokens", -1000),
+        ("tokens", True),
+        ("tokens", 1000.0),
+    ],
+)
+def test_root_currency_requires_typed_positive_reservation_identity(tmp_path, field, value):
+    study, result = authored_failed_study(tmp_path)
+    path = tmp_path / "currency.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[0][field] = value
+    if field == "tokens":
+        # Keep arithmetic internally consistent so only token validity can refuse.
+        amount = Decimal(int(value)) / Decimal(1000000)
+        rows[0].update(reserved_usd=str(amount), cumulative_reserved_usd=str(amount))
+        rows[1]["reserved_usd"] = str(amount)
+        rows[2]["cumulative_reserved_usd"] = str(amount + Decimal("0.002"))
+        result["currency"]["reserved_usd"] = rows[2]["cumulative_reserved_usd"]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (tmp_path / "root-status.json").write_text(json.dumps(result))
+    with pytest.raises(ValueError, match="reservation"):
+        study.verify_root(tmp_path)
+
+
 def test_tracking_opt_out_never_constructs_client_or_changes_result(monkeypatch):
     from gluomem_bench import tracking
 

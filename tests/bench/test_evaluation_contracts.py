@@ -357,6 +357,39 @@ def test_source_omission_default_and_created_at_only_projection():
     q.validate_report_projection([c], authority, effective)
 
 
+@pytest.mark.parametrize("created_at", ["absent", None, "2026-01-03T00:00:00Z"])
+@pytest.mark.parametrize("override", [False, True])
+def test_effective_source_preserves_optional_clock_and_rejects_mutation(created_at, override):
+    c, _, _, _ = fixture()
+    events = sources()
+    for event in events:
+        if created_at == "absent":
+            event.pop("created_at")
+        else:
+            event["created_at"] = created_at
+    raw = json.dumps(events).encode()
+    effective = deepcopy(events)
+    if override:
+        for event in effective:
+            event["created_at"] = "2026-11-01T00:00:00Z"
+    before = deepcopy(effective)
+
+    def bind():
+        return q.bind_report_sources(
+            [c],
+            source_bytes=raw,
+            source_sha256=digest(raw),
+            scope=SCOPE,
+            effective_events=effective,
+        )
+
+    assert bind() is not None
+    assert effective == before
+    effective[1]["messages"][0]["content"] += " altered"
+    with pytest.raises(ValueError, match="invalid-correction-source-authority"):
+        bind()
+
+
 def test_source_pin_policy_and_forged_authority_refuse_before_result_lookup():
     c, _, s, _ = fixture()
     with pytest.raises(q.Refusal, match="invalid-correction-source-authority"):

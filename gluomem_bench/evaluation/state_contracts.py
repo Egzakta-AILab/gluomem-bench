@@ -614,7 +614,10 @@ def bind_report_sources(checks, *, source_bytes, source_sha256, scope, effective
             if len(projected) != len(events):
                 raise ValueError
             for original, effective in zip(events, projected, strict=True):
-                effective["created_at"] = original.get("created_at")
+                if "created_at" in original:
+                    effective["created_at"] = original["created_at"]
+                else:
+                    effective.pop("created_at", None)
             if not _typed_equal(projected, events):
                 raise ValueError
         entries = {}

@@ -1038,6 +1038,37 @@ def execute_spec(spec_path, approval_path, spec):
     return result
 
 
+def reconcile_reservations(ledger):
+    """Join dispatches to unique earlier debits without refunding unused leases."""
+    reservations, intents, dispatched = {}, [], set()
+    for row in ledger:
+        if row["kind"] not in {"reservation", "dispatch-intent"}:
+            continue  # V10 physical rows have their own stronger verifier.
+        identity = row["reservation_id"]
+        if type(identity) is not int or identity < 1:
+            raise ValueError("invalid root currency reservation identity")
+        if row["kind"] == "reservation":
+            if type(row.get("tokens")) is not int or row["tokens"] < 1:
+                raise ValueError("invalid root currency reservation tokens")
+            if identity in reservations:
+                raise ValueError("duplicate root currency reservation")
+            reservations[identity] = row
+            continue
+        reserved = reservations.get(identity)
+        if reserved is None or identity in dispatched:
+            raise ValueError("dispatch requires one unique preceding reservation")
+        fields = ("job_id", "reserved_usd") + tuple(
+            key
+            for key in ("tokens", "prompt_reserved_tokens", "output_reserved_tokens")
+            if key in row
+        )
+        if any(key not in reserved or row[key] != reserved[key] for key in fields):
+            raise ValueError("dispatch reservation identity differs")
+        dispatched.add(identity)
+        intents.append(row)
+    return list(reservations.values()), intents
+
+
 def verify_root(root, *, candidate_path=None):
     import hashlib
     from dataclasses import asdict
@@ -1209,8 +1240,7 @@ def verify_root(root, *, candidate_path=None):
         elif row["status"] in {"unrun", "cancelled"} and row["calls"] != 0:
             raise ValueError("unrun row contains attempted spend")
     currency_rows = read_lines(root / "currency.jsonl")
-    reserved = [r for r in currency_rows if r["kind"] == "reservation"]
-    intents = [r for r in currency_rows if r["kind"] == "dispatch-intent"]
+    reserved, intents = reconcile_reservations(currency_rows)
     if (
         len(intents) != total
         or total != result["accounting"]["calls"]
