@@ -127,6 +127,8 @@ def test_bench_sample_fetch_and_replay_cli(tmp_path: Path, capsys) -> None:
             "--out",
             str(tmp_path / "out"),
             "--override",
+            "dspy.model=mock",
+            "--override",
             "embedding.model=mock",
             "--override",
             "components.allow_fake=true",

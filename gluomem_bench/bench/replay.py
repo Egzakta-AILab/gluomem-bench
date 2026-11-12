@@ -24,6 +24,7 @@ from gluomem_bench.bench.registry import (
     protocol_id,
 )
 from gluomem_bench.bench.types import Score
+from gluomem_bench.tracking import track_experiment
 
 if TYPE_CHECKING:
     from gluomem.embedding.base import Embedder
@@ -347,6 +348,7 @@ def receipt_digest(receipt: dict[str, Any]) -> str:
     return hashlib.sha256(receipt_text(receipt).encode("utf-8")).hexdigest()
 
 
+@track_experiment('replay_fixture', kind='condition')
 def run_replay_fixture(
     cfg: AppConfig,
     *,

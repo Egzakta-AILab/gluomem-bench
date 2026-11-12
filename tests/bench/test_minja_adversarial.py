@@ -16,7 +16,7 @@ from gluomem_bench.config import AppConfig, load_config
 
 @pytest.fixture
 def adv_cfg() -> AppConfig:
-    return load_config().with_overrides(
+    return load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "embedding.model": "mock",
             "components.allow_fake": True,

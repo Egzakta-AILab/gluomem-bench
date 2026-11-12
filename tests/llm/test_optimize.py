@@ -111,7 +111,9 @@ def test_sealed_split_and_optimize_task_flow(
         check_trainset("fact_extraction", raw_ex)
 
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-placeholder")
-    cfg = load_config(env_file=tmp_path / "absent.env").with_overrides(
+    cfg = load_config(
+        overrides={"dspy.model": "deepseek-flash"}, env_file=tmp_path / "absent.env"
+    ).with_overrides(
         {"dspy.artifacts.dir": str(tmp_path / "artifacts")}
     )
 

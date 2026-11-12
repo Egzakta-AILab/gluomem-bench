@@ -55,7 +55,7 @@ def _ablation_cache() -> CandidateCache:
 
 
 def test_ablation_runner_and_cli(tmp_path: Path, capsys) -> None:
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "mock"})
     cache = _ablation_cache()
     out_dir = tmp_path / "ablate_out"
 
@@ -85,7 +85,9 @@ def test_ablation_runner_and_cli(tmp_path: Path, capsys) -> None:
 
     cache_dir = tmp_path / "cache"
     cache.save(cache_dir)
-    rc = main(["ablate", "--cache", str(cache_dir), "--k", "2", "--json"])
+    rc = main(
+        ["ablate", "--cache", str(cache_dir), "--k", "2", "--json", "--override", "dspy.model=mock"]
+    )
     assert rc == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["incumbent_recall"] == 1.0

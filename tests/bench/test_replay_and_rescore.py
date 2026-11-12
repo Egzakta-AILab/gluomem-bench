@@ -36,7 +36,7 @@ from tests.bench.conftest import FAKE_BACKENDS
 
 @pytest.fixture
 def replay_cfg() -> AppConfig:
-    return load_config().with_overrides(
+    return load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "embedding.model": "mock",
             "components.allow_fake": True,

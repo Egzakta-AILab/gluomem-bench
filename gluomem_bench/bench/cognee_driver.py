@@ -10,6 +10,8 @@ import hashlib
 import json
 from pathlib import Path
 
+from gluomem_bench.tracking import track_experiment
+
 PROTOCOL = "cognee-graph-lme-seven@v1"
 FULL_PROTOCOL = "cognee-graph-lme-complete@v2"
 SAMPLE_IDS = (
@@ -401,6 +403,7 @@ def reconcile_job(
     }
 
 
+@track_experiment('longmemeval', kind='condition')
 def run_graph_job(
     *,
     job,
@@ -599,6 +602,7 @@ def assert_producer_exited(result):
         raise RuntimeError("producer has not exited; post-exit verification refused")
 
 
+@track_experiment('longmemeval', kind='campaign')
 def run_admitted(spec, *, cfg, adapter, profile, encoder, spec_sha256):
     """Run the frozen matrix with ONE JobContext for both native and reader ledgers."""
     from gluomem_bench.bench.comparison_backends import CogneeSettings
@@ -969,6 +973,7 @@ def _main(argv=None):
     )
 
 
+@track_experiment('longmemeval', kind='campaign')
 def execute_cognee(spec_path, approval_path):
     spec = verify_execution_spec(spec_path, approval_path)
     cfg, adapter, profile = prepare_inputs(spec)

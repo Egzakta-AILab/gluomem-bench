@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import dotenv
-from pydantic import BaseModel, Field, model_validator
-from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
-
+from gluomem.config.app_config import (
+    _PYDANTIC_DEFAULTS as _CORE_DEFAULTS,
+)
 from gluomem.config.app_config import (
     ABSTAIN_SCORES,
     AbstainConfig,
@@ -52,6 +52,8 @@ from gluomem.config.app_config import (
 from gluomem.config.app_config import (
     AppConfig as CoreAppConfig,
 )
+from pydantic import BaseModel, Field, model_validator
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource
 
 _BENCH_PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,7 +63,6 @@ def _default_bench_dspy_tasks() -> dict[str, DspyTaskConfig]:
     tasks.setdefault(
         "answer",
         DspyTaskConfig(
-            model="deepseek-flash",
             module="predict",
             temperature=0.0,
             max_tokens=1024,
@@ -70,8 +71,10 @@ def _default_bench_dspy_tasks() -> dict[str, DspyTaskConfig]:
     return tasks
 
 
-def _default_bench_dspy_config() -> DspyConfig:
-    return DspyConfig(tasks=_default_bench_dspy_tasks())
+def _default_bench_dspy_fields() -> dict[str, Any]:
+    """Materialize optional defaults without selecting a commercial model."""
+    return {**_CORE_DEFAULTS["dspy"],
+            "tasks": {k: v.model_dump() for k, v in _default_bench_dspy_tasks().items()}}
 
 
 class BenchmarkJudgeConfig(BaseModel):
@@ -181,7 +184,7 @@ _BENCH_PYDANTIC_DEFAULTS: dict[str, Any] = {
     "kg": KgConfig().model_dump(),
     "safety": SafetyConfig().model_dump(),
     "write": WriteConfig().model_dump(),
-    "dspy": _default_bench_dspy_config().model_dump(),
+    "dspy": _default_bench_dspy_fields(),
     "benchmark": BenchmarkConfig().model_dump(),
 }
 
@@ -189,7 +192,7 @@ _BENCH_PYDANTIC_DEFAULTS: dict[str, Any] = {
 class AppConfig(CoreAppConfig):
     """Benchmark-aware ``AppConfig`` extending Core ``gluomem.config.AppConfig``."""
 
-    dspy: DspyConfig = Field(default_factory=_default_bench_dspy_config)
+    dspy: DspyConfig = Field(...)
     benchmark: BenchmarkConfig = Field(default_factory=BenchmarkConfig)
 
     @classmethod

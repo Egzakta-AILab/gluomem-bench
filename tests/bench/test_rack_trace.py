@@ -196,8 +196,9 @@ def test_production_refuses_latched_client_before_tokenizer_or_trace(tmp_path, m
     )
     client._latch(FatalRackError("prior failure"))
     try:
-        with pytest.raises(FatalRackError, match="prior failure"):
+        with pytest.raises(FatalRackError, match="rack-guard") as caught:
             lm(messages=[{"role": "user", "content": "source"}])
+        assert "prior failure" not in str(caught.value)
         assert requests == provider_calls == []
         assert not trace.exists()
     finally:

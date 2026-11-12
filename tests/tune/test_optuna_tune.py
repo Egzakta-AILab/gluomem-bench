@@ -71,7 +71,7 @@ def _synthetic_cache() -> CandidateCache:
 
 def test_optuna_tune_never_regresses_on_held_out(tmp_path: Path) -> None:
     # Start with a temporal-heavy profile that ranks fresh_distractor above gold_id at k=1
-    cfg = load_config().with_overrides(
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "scoring.profiles.balanced.weights.temporal": 0.85,
             "scoring.profiles.balanced.weights.popularity": 0.05,
@@ -140,6 +140,8 @@ def test_cli_tune_end_to_end_and_missing_extra(
             "2",
             "--seed",
             "7",
+            "--override",
+            "dspy.model=mock",
         ]
     )
     assert rc == 0
@@ -154,7 +156,9 @@ def test_cli_tune_end_to_end_and_missing_extra(
         "_missing",
         lambda extra: ["optuna"] if extra == "tune" else [],
     )
-    rc_missing = main(["tune", "--cache", str(cache_dir), "--trials", "5"])
+    rc_missing = main(
+        ["tune", "--cache", str(cache_dir), "--trials", "5", "--override", "dspy.model=mock"]
+    )
     assert rc_missing == 2
     err = capsys.readouterr().err
     assert "requires the 'tune' extra" in err
@@ -164,8 +168,18 @@ def test_cli_tune_end_to_end_and_missing_extra(
 def test_same_seed_produces_identical_trials_artifacts_and_split(tmp_path: Path) -> None:
     cache = _synthetic_cache()
     kwargs = TuneConfig(n_trials=30, seed=19, k=1)
-    first = run_optuna_tune(cache, load_config(), tune_cfg=kwargs, out_dir=tmp_path / "first")
-    second = run_optuna_tune(cache, load_config(), tune_cfg=kwargs, out_dir=tmp_path / "second")
+    first = run_optuna_tune(
+        cache,
+        load_config(overrides={"dspy.model": "mock"}),
+        tune_cfg=kwargs,
+        out_dir=tmp_path / "first",
+    )
+    second = run_optuna_tune(
+        cache,
+        load_config(overrides={"dspy.model": "mock"}),
+        tune_cfg=kwargs,
+        out_dir=tmp_path / "second",
+    )
     assert first.best_params == second.best_params
     assert first.trials == second.trials
     assert first.to_manifest_dict() == second.to_manifest_dict()
@@ -186,7 +200,7 @@ def test_dev_winner_is_rejected_when_it_regresses_on_held_out() -> None:
             for qid in source.query_ids()
         },
     )
-    cfg = load_config().with_overrides(
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "scoring.profiles.balanced.weights.temporal": 0.85,
             "scoring.profiles.balanced.weights.popularity": 0.05,
@@ -208,4 +222,4 @@ def test_tuning_refuses_an_empty_held_out_set() -> None:
     source = _synthetic_cache()
     cache = CandidateCache({"q_0": source.rows("q_0")}, qrels={"q_0": source.qrel("q_0")})
     with pytest.raises(ValueError, match="at least two"):
-        run_optuna_tune(cache, load_config())
+        run_optuna_tune(cache, load_config(overrides={"dspy.model": "mock"}))

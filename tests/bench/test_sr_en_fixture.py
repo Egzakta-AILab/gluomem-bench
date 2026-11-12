@@ -21,7 +21,7 @@ from gluomem_bench.llm.extraction_eval import normalize
 
 @pytest.fixture
 def replay_cfg() -> AppConfig:
-    return load_config().with_overrides(
+    return load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "embedding.model": "mock",
             "components.allow_fake": True,
@@ -201,10 +201,10 @@ def test_sr_en_translation_multilingual_e5_small_beats_minilm(tmp_path: Path) ->
 
     if not is_available("embeddings"):
         pytest.skip("requires gluomem[embeddings] extra")
-    minilm_cfg = load_config().with_overrides(
+    minilm_cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {"embedding.model": "minilm", "search.rerank.enabled": False}
     )
-    e5_cfg = load_config().with_overrides(
+    e5_cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {"embedding.model": "multilingual_e5_small", "search.rerank.enabled": False}
     )
     minilm_receipt, _ = run_replay_fixture(

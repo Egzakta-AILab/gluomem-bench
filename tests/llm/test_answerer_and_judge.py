@@ -20,7 +20,7 @@ from gluomem_bench.llm.signatures import (
 
 
 def test_answerer_routing_module_and_style_flips() -> None:
-    cfg = load_config()
+    cfg = load_config(overrides={"dspy.model": "deepseek-flash"})
     lm = DummyLM([{"answer": "Seattle"}])
     answerer = Answerer(cfg, lm=lm)
     res = answerer("Where does Bob live?", "[2023-08-02] Bob: I moved to Seattle.")
@@ -54,7 +54,7 @@ def test_qajudge_verdict_backbone_and_calibration_docstring() -> None:
     assert "Grade leniently" in (JudgeQA.__doc__ or "")
     assert isinstance(build_judge_module(), dspy.ChainOfThought)
 
-    router = LMRouter(load_config())
+    router = LMRouter(load_config(overrides={"dspy.model": "mock"}))
     lm = DummyLM(
         [
             {

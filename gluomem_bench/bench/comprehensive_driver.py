@@ -101,11 +101,18 @@ from gluomem_bench.bench.artifacts import (
     verify_artifact_hashes,
 )
 from gluomem_bench.bench.embedding_runtime import safe_failure_diagnostic
+from gluomem_bench.tracking import track_experiment
 
 PROTOCOL = "local-qwen-development-pilot@v1"
 FULL_PROTOCOL = "longmemeval-full-development@v1"
 SUPPORTED_SYSTEMS = ("gluomem", "mem0", "no_memory", "bm25", "dense", "hybrid", "full_context")
 CONTINUATION_PROTOCOL = "longmemeval-full-continuation@v3"
+
+
+def build_provider_study_spec(**settings):
+    """Versioned factory; v8 default and legacy pilot/full/continuation gates are unchanged."""
+    from gluomem_bench.bench.provider_study import build_spec
+    return build_spec(**settings)
 
 
 def _continuation_rows(original_spec, original, reuse, quality_failures, output_root):
@@ -1383,6 +1390,9 @@ def verify_execution_spec(spec_path, approval_path):
     spec_bytes = spec_path.read_bytes()
     spec = json.loads(spec_bytes)
     approval = json.loads(approval_path.read_bytes())
+    if spec.get("protocol") in {"longmemeval-provider-study@v8", "longmemeval-provider-study@v10"}:
+        from gluomem_bench.bench.provider_study import verify_admission
+        return verify_admission(spec, spec_bytes, approval)
     if (
         spec.get("protocol")
         not in {PROTOCOL, FULL_PROTOCOL, CONTINUATION_PROTOCOL, CHAINED_PROTOCOL}
@@ -1471,12 +1481,16 @@ def _validate_chain_launch_process(spec):
         raise ValueError("chain launch interpreter environment differs")
 
 
+@track_experiment('longmemeval', kind='campaign')
 def execute_longmemeval(spec_path, approval_path):
     """Execute only the explicit admitted jobs; never infer dataset/system defaults."""
     admitted_raw, admitted_approval = Path(spec_path).read_bytes(), Path(approval_path).read_bytes()
     spec = verify_execution_spec(spec_path, approval_path)
     if Path(spec_path).read_bytes() != admitted_raw or Path(approval_path).read_bytes() != admitted_approval:
         raise ValueError("execution provenance changed during admission")
+    if spec.get("protocol") in {"longmemeval-provider-study@v8", "longmemeval-provider-study@v10"}:
+        from gluomem_bench.bench.provider_study import execute_spec
+        return execute_spec(spec_path, approval_path, spec)
     if spec["protocol"] == CHAINED_PROTOCOL and "launch_metadata" in spec:
         _validate_chain_launch_process(spec)
     continuation = spec["protocol"] in {CONTINUATION_PROTOCOL, CHAINED_PROTOCOL}
@@ -2432,6 +2446,9 @@ def verify_campaign(out, *, candidate_path=None, budget=None, _ancestry=()):
     raw = (root / "execution-spec.json").read_bytes()
     spec = json.loads(raw)
     revoked = root / "root-incomplete.json"
+    if spec.get("protocol") in {"longmemeval-provider-study@v8", "longmemeval-provider-study@v10"}:
+        from gluomem_bench.bench.provider_study import verify_root
+        return verify_root(root, candidate_path=candidate_path)
     selected = (
         revoked
         if spec.get("protocol") == CHAINED_PROTOCOL and revoked.exists()
@@ -2604,9 +2621,57 @@ def main(argv=None):
     import argparse
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--spec", type=Path, required=True)
-    parser.add_argument("--approval", type=Path, required=True)
+    parser.add_argument("--spec", type=Path)
+    parser.add_argument("--approval", type=Path)
+    parser.add_argument(
+        "--freeze-provider-study",
+        type=Path,
+        metavar="SETTINGS_JSON",
+        help=("freeze selected LME-S jobs (v8 default or explicit v10 study_protocol); "
+              "creates no execution approval"),
+    )
+    parser.add_argument("--out", type=Path, help="fresh frozen specification path")
+    parser.add_argument(
+        "--verify",
+        type=Path,
+        metavar="CAMPAIGN_ROOT",
+        help="independent read-only saved campaign replay",
+    )
     args = parser.parse_args(argv)
+    if args.freeze_provider_study is not None:
+        if (
+            args.out is None
+            or args.spec is not None
+            or args.approval is not None
+            or args.verify is not None
+        ):
+            parser.error("provider freeze requires only --freeze-provider-study and --out")
+        if args.out.exists():
+            raise FileExistsError(args.out)
+        spec = build_provider_study_spec(**json.loads(args.freeze_provider_study.read_bytes()))
+        material = (json.dumps(spec, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode()
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with args.out.open("xb") as stream:
+            stream.write(material)
+        print(
+            json.dumps(
+                {
+                    "protocol": spec["protocol"],
+                    "jobs": len(spec["jobs"]),
+                    "spec_sha256": hashlib.sha256(material).hexdigest(),
+                    "execution_approved": False,
+                }
+            )
+        )
+        return spec
+    if args.verify is not None:
+        if args.spec is not None or args.approval is not None or args.out is not None:
+            parser.error("read-only verification accepts only --verify")
+        result = verify_campaign(args.verify)
+        print(json.dumps({"complete": result["complete"], "accounting": result["accounting"]}))
+        return result
+    if args.spec is None or args.approval is None or args.out is not None:
+        parser.error("execution requires --spec and --approval")
     result = execute_longmemeval(args.spec, args.approval)
     from collections import Counter
 
@@ -2619,6 +2684,7 @@ def main(argv=None):
             }
         )
     )
+    return result
 
 
 if __name__ == "__main__":

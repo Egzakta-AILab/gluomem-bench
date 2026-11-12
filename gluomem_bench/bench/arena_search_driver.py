@@ -18,6 +18,7 @@ from types import ModuleType, SimpleNamespace
 from typing import Any, Optional
 
 from gluomem_bench.bench.error_privacy import safe_error
+from gluomem_bench.tracking import track_experiment
 
 from . import arena_campaign as shared
 from .artifacts import sha256_file as sha
@@ -211,6 +212,7 @@ class SearchAdmission:
         return verify_spec(spec, allow_started=True, assets=False)
 
 
+@track_experiment('memoryarena_search', kind='campaign')
 def execute(spec_path, approval_path):
     admission = SearchAdmission(spec_path, approval_path)
     return _execute_verified(
@@ -837,6 +839,7 @@ class GuardedTools:
             raise shared.NativeAbort(safe_error(exc)) from exc
 
 
+@track_experiment('memoryarena_search', kind='condition')
 def run_task(
     task, *, native, client, tools, memory, out, native_query_id, gold_path, qrels, max_iterations
 ):

@@ -95,9 +95,9 @@ def _authored_previous(tmp_path):
 
 
 def test_chain_builder_binds_immediate_predecessor_and_exact_cumulative_debit(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, authored_private_runtime
 ):
-    from gluomem_bench.bench import comprehensive_driver as d
+    d = authored_private_runtime
 
     previous = _authored_previous(tmp_path)
     monkeypatch.setattr(d, "_load_chained_predecessor", lambda b, **kw: copy.deepcopy(previous))

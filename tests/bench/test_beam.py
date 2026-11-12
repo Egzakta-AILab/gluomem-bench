@@ -41,10 +41,11 @@ def beam_data(tmp_path):
     path.write_text(json.dumps(rows), encoding="utf-8")
     sha = hashlib.sha256(path.read_bytes()).hexdigest()
     cfg = AppConfig(
+        dspy={"model": "mock"},
         benchmark={
             "datasets_dir": str(tmp_path),
             "datasets": {"beam_128k": {"url": "", "sha256": sha, "file": path.name}},
-        }
+        },
     )
     return cfg, path, rows
 
@@ -128,7 +129,7 @@ def test_beam_cli_production_ingest_is_explicit_and_rack_only(
         )
         == 0
     )
-    assert seen["cfg"].dspy.default_model == "rack-qwen"
+    assert seen["cfg"].dspy.model == "rack-qwen"
     assert seen["conv_ids"] == {"beam-1"}
     assert isinstance(seen["extractors"], DspyExtractors)
     assert isinstance(seen["extractors"]._router, RackRouter)

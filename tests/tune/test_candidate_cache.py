@@ -33,7 +33,9 @@ from gluomem_bench.tune.rescore import rescore_array_scores, rescore_cache
 
 
 def test_rescore_matches_hybrid_search_ranking_and_scores(tmp_path: Path) -> None:
-    cfg = load_config().with_overrides({"embedding.model": "mock", "components.allow_fake": True})
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
+        {"embedding.model": "mock", "components.allow_fake": True}
+    )
     dim = int(cfg.storage.vector_dim)
     embedder = MockEmbedder(dim=dim)
     db = MindDB(tmp_path / "tune.mind", dim=dim)
@@ -156,7 +158,9 @@ def test_ir_metrics_ndcg_recall_hit_mrr() -> None:
 def test_scoped_cache_uses_runtime_expiry_clock_and_time_filters(
     tmp_path: Path, workspace: str, filtered: bool
 ) -> None:
-    cfg = load_config().with_overrides({"embedding.model": "mock", "components.allow_fake": True})
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
+        {"embedding.model": "mock", "components.allow_fake": True}
+    )
     scope = MemoryScope("org", "alice", workspace)
     other = MemoryScope("org", "bob", workspace)
     now = "2026-06-01T12:00:00"
@@ -261,18 +265,20 @@ def test_manifest_digest_excludes_wall_clock_and_fractional_config_is_exact() ->
     cache = CandidateCache({})
     assert replace(cache.manifest, created_at="2099-01-01").digest() == cache.manifest.digest()
     p = ParamVector(half_life_days=17.4, flat_boost_days=0.4)
-    cfg = load_config().with_overrides(p.to_config_overrides())
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(p.to_config_overrides())
     assert ParamVector.from_config(cfg).half_life_days == 17.4
     assert ParamVector.from_config(cfg).flat_boost_days == 0.4
 
 
 def test_raw_cache_does_not_need_the_rerank_response_gate(tmp_path: Path) -> None:
-    cfg = load_config().with_overrides(
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "embedding.model": "mock",
             "components.allow_fake": True,
             "search.abstain.score": "rerank",
-            "search.abstain.calibration": load_config().models["reranker"].provider_model,
+            "search.abstain.calibration": load_config(overrides={"dspy.model": "mock"})
+            .models["reranker"]
+            .provider_model,
         }
     )
     with MindDB(tmp_path / "raw.mind", dim=cfg.storage.vector_dim) as db:

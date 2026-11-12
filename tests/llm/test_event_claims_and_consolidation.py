@@ -194,7 +194,9 @@ def test_optimize_wiring_for_event_claims_and_consolidate(
         == 1.0
     )
 
-    cfg = load_config().with_overrides({"dspy.artifacts.dir": str(tmp_path / "artifacts")})
+    cfg = load_config(overrides={"dspy.model": "deepseek-flash"}).with_overrides(
+        {"dspy.artifacts.dir": str(tmp_path / "artifacts")}
+    )
 
     class FakeTeleprompter:
         def __init__(self, metric: object) -> None:

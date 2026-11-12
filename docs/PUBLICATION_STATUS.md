@@ -9,7 +9,7 @@ benchmark quality, installed-SDK parity, or permission to execute a campaign.
 The companion GluoMem core changes are required for structured adapters,
 field-length constraints and the current configuration contract.
 
-The latest retained GluoMem development attempt remains failed and paused:
+A historical GluoMem development attempt remains failed and paused:
 0 of 3 histories completed, all 3 failed, with 816 generation calls spent.
 Whitespace-only generation remains unresolved. Do not infer a quality ranking,
 reuse failed outcomes as successful results, refund historical spend, relabel
@@ -17,6 +17,38 @@ older runs with newer protocols, or restart inference from this publication.
 These figures describe the operator's historical record, not a new run performed
 while assembling this change. Complete Mem0, Cognee and other baseline histories
 under separate reviewed authority before making comparative claims.
+
+## Current portable repair surface
+
+The additional source includes explicit versioned provider/endpoint/pool roles,
+bounded catalogue-price classification, per-physical-attempt reservations and
+unknown-usage preservation, native structured/typed-text diagnostics, strict
+source-quote extraction, observed-producer replay and usable-evidence packing.
+These are SDK/harness contracts, not new measured model quality. Shared upstream
+artifact, reservation, experience-memory and resource-lifecycle refactors and
+trimmed test scope remain in place; old campaign approvals are not refreshed.
+
+Root model selection is required explicitly. Per-task overrides inherit that
+selection only when omitted; no commercial model fallback is selected by import.
+Retry/fallback/call limits, including a configured zero-call judge, remain
+explicit. Publishing a client does not qualify a closed driver/comparator cell.
+
+[Bounded authored evaluation](BOUNDED_EVALUATION.md) documents the public
+`gluomem_bench.evaluation` API and its executable offline JSON entrypoint.
+It preserves intended-origin retirement, typed state and independent whole-span
+source proof, with an explicit correction-only verbatim-report policy. Unseen
+report paraphrases are unsupported; semantic stale-positive absence stays
+`not_measured`. Hard-forget literal exclusion has no report exception.
+MetaVerifier catalogue/origin and new source-bound runner activation remain TODO.
+
+Optional MLflow tracking is disabled by default and lazy-imported. Install the
+explicit `tracking-client` or `tracking` extra separately when desired; neither
+is required for offline grading. Configure a local absolute SQLite URI or an
+explicit loopback service and local artifact location. The reusable hooks record
+allowlisted hashes, categorical metadata and numeric receipts, not secrets, raw
+source/prompt/answer payloads, arbitrary errors or private deployment profiles.
+Reservations are not billed cost and unknown observations are not zero metrics.
+No service/model execution is authorized by tracking or by this publication.
 
 ## Method boundaries
 
@@ -76,6 +108,15 @@ is collection syntax, not itself a network/process sandbox. Some older tests
 still require separately supplied native source fixtures or retained evidence;
 the publication handoff reports actual passes, failures and exclusions. Do not
 interpret collection success as a green full suite or real-model qualification.
+The publication repairs include exact-string observation-ID preflight and
+duplicate refusal, privacy-preserving diagnostic expectations, and explicitly
+synthetic source-bound runtime fixtures. Normal baseline-aware Ruff comparison
+finds no introduced violations; inherited lint findings remain. Full local
+verification is not green: child-process controls, the Windows socket fence and
+the unavailable optional SciPy dependency leave separately reported failures.
+Whole collection also encounters the inherited documentation Git subprocess
+under the strict no-child boundary. No guard was weakened or test deleted to
+hide these limits; remote CI must be checked on the actual published heads.
 No environment was installed or upgraded for the publication checks, and the
 lockfile has not yet been regenerated for the added Cognee optional extra.
 

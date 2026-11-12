@@ -48,6 +48,7 @@ from gluomem_bench.llm.extraction_eval import (
     score_event_claims_case,
 )
 from gluomem_bench.llm.signatures import TASK_SIGNATURES
+from gluomem_bench.tracking import track_experiment
 
 # Anything with .compile(student, trainset=...) — tests inject fakes.
 TeleprompterFactory = Callable[[Callable], Any]
@@ -271,6 +272,7 @@ def _default_teleprompter_factory(cfg: AppConfig) -> TeleprompterFactory:
     return factory
 
 
+@track_experiment('dspy_optimization', kind='condition')
 def optimize_task(
     task: str,
     cfg: AppConfig,
@@ -289,13 +291,14 @@ def optimize_task(
         else load_trainset(trainset_path, task)
     )
     check_trainset(task, trainset)
+    model_ref = cfg.dspy.tasks[task].model or cfg.dspy.model
     if teleprompter_factory is None:
-        entry = cfg.models[cfg.dspy.tasks[task].model]
+        entry = cfg.models[model_ref]
         key_env = entry.api_key_env or "OPENROUTER_API_KEY"
         if not os.environ.get(key_env):
             raise RuntimeError(
                 f"optimization for task '{task}' calls the real model "
-                f"'{cfg.dspy.tasks[task].model}' and needs {key_env} set; "
+                f"'{model_ref}' and needs {key_env} set; "
                 f"export it (or pass a teleprompter_factory for dry runs)"
             )
         teleprompter_factory = _default_teleprompter_factory(cfg)
@@ -311,10 +314,11 @@ def optimize_task(
         compiled,
         cfg.dspy.artifacts.dir,
         task,
-        model_ref=cfg.dspy.tasks[task].model,
+        model_ref=model_ref,
     )
 
 
+@track_experiment('dspy_optimization', kind='campaign')
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m gluomem_bench.llm.optimize",

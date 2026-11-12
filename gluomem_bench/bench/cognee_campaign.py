@@ -113,6 +113,10 @@ def verify_generation_evidence(receipt, *, profile, expected_calls, starting_cal
     budget count captured before bridge use. Failed/partial evidence is rejected,
     never repaired into success. The returned digest binds the retained bytes.
     """
+    if profile.profile_version == "provider-roles-v8":
+        from gluomem_bench.bench.provider_study_evidence import verify_cognee_generations
+        return verify_cognee_generations(receipt, profile=profile,
+            expected_calls=expected_calls, starting_calls=starting_calls)
     import hashlib
 
     material = Path(receipt).read_bytes()
@@ -447,6 +451,8 @@ class CogneeGenerationBridge:
 
     def __init__(self, profile, *, budget, receipt: Path, transport=None,
                  operation_deadline=None, cleanup_reserve_seconds=0):
+        from gluomem_bench.bench.rack_provider import refuse_unqualified_endpoint_comparator
+        refuse_unqualified_endpoint_comparator(profile)
         if (operation_deadline is not None and
             (not math.isfinite(operation_deadline) or cleanup_reserve_seconds <= 0
              or not math.isfinite(cleanup_reserve_seconds))):
@@ -647,11 +653,19 @@ class CogneeGenerationBridge:
             if path == "/tokenize"
             else self.profile.base_url
         )
+        headers = {}
+        if self.profile.provider == "openrouter-baidu-fp8" and path == "/chat/completions":
+            import os
+            credential = os.environ.get(self.profile.api_key_env or "")
+            if not credential:
+                raise ValueError("explicit provider credential environment missing")
+            headers["Authorization"] = "Bearer " + credential
         response = self._client.request(
             method,
             base + path,
             json=payload,
             timeout=self._timeout(),
+            headers=headers,
         )
         row = {"kind": path, "request": payload, "http_status": response.status_code}
         if response.is_success:
@@ -707,6 +721,9 @@ class CogneeGenerationBridge:
                     "chat_template_kwargs",
                 }
                 output = body.get("max_tokens", body.get("max_completion_tokens"))
+                if (self.profile.provider == "openrouter-baidu-fp8"
+                        and "chat_template_kwargs" in body):
+                    raise ValueError("Qwen generation controls forbidden for DeepSeek")
                 if (
                     not isinstance(body, dict)
                     or set(body) - allowed
@@ -757,26 +774,56 @@ class CogneeGenerationBridge:
                     validator = Draft202012Validator(schema)
                 with self._identity_lock:
                     if not self._ready:
-                        models = self._request("GET", "/models").json()
+                        path = ("/models/" + self.profile.model + "/endpoints"
+                                if self.profile.provider == "openrouter-baidu-fp8" else "/models")
+                        models = self._request("GET", path).json()
+                        if self.profile.provider == "openrouter-baidu-fp8":
+                            from gluomem_bench.bench.rack_provider import endpoint_discovery
+                            models = endpoint_discovery(self.profile, models)
+                            from gluomem_bench.bench.provider_study_client import (
+                                validate_currency_metadata,
+                            )
+                            validate_currency_metadata(self.profile, models, self.budget)
                         if self.profile.model not in {x["id"] for x in models["data"]}:
                             raise ValueError("exact model unavailable")
+                        if self.profile.profile_version == "provider-roles-v8":
+                            selected = next(
+                                x for x in models["data"] if x["id"] == self.profile.model
+                            )
+                            if selected.get("max_model_len") != self.profile.context_window:
+                                raise ValueError("exact served context evidence required")
                         self._ready = True
-                forwarded = {**body, "chat_template_kwargs": {"enable_thinking": False}}
-                count = self._request(
-                    "POST",
-                    "/tokenize",
-                    {
-                        "model": self.profile.model,
-                        "messages": body["messages"],
-                        "add_generation_prompt": True,
-                        "chat_template_kwargs": forwarded["chat_template_kwargs"],
-                    },
-                ).json()["count"]
+                from gluomem_bench.bench.rack_provider import (
+                    estimated_prompt_tokens,
+                    generation_options,
+                    response_evidence,
+                )
+                forwarded = {**body, **generation_options(self.profile)}
+                conservative = self.profile.token_count_policy == "utf8-conservative-v1"
+                count = (
+                    estimated_prompt_tokens(body["messages"])
+                    if conservative
+                    else self._request(
+                        "POST",
+                        "/tokenize",
+                        {
+                            "model": self.profile.model,
+                            "messages": body["messages"],
+                            "add_generation_prompt": True,
+                            "chat_template_kwargs": forwarded["chat_template_kwargs"],
+                        },
+                    ).json()["count"]
+                )
                 output = body.get("max_tokens", body.get("max_completion_tokens"))
                 if type(count) is not int or count < 0:
                     raise ValueError("actual served tokenizer count required")
                 reserve = self.profile.schema_reserve_tokens
-                if response_format is not None:
+                if conservative and response_format is not None:
+                    reserve = max(
+                        reserve,
+                        len(json.dumps(response_format, ensure_ascii=False).encode("utf-8")) + 512,
+                    )
+                elif response_format is not None:
                     schema_count = self._request(
                         "POST",
                         "/tokenize",
@@ -797,6 +844,8 @@ class CogneeGenerationBridge:
                 ):
                     raise ValueError("native prompt exceeds context; no truncation")
                 row.update(prompt_tokens=count, reserved_tokens=tokens, forwarded_request=forwarded)
+                if self.profile.profile_version == "provider-roles-v8":
+                    row["token_count_policy"] = self.profile.token_count_policy
                 with self.budget.lease(tokens):
                     self.budget.check()
                     with self._lock:
@@ -823,11 +872,16 @@ class CogneeGenerationBridge:
                         or choices[0].get("finish_reason") != "stop"
                         or not isinstance(choices[0].get("message", {}).get("content"), str)
                         or type(usage.get("prompt_tokens")) is not int
-                        or usage["prompt_tokens"] != count
+                        or (
+                            usage["prompt_tokens"] > count
+                            if conservative
+                            else usage["prompt_tokens"] != count
+                        )
                         or type(usage.get("completion_tokens")) is not int
                         or not 0 <= usage["completion_tokens"] <= output
                     ):
                         raise ValueError("native response incomplete or tokenizer/model mismatch")
+                    row.update(response_evidence(self.profile, result, count, output_budget=output))
                     if validator is not None:
                         validator.validate(json.loads(choices[0]["message"]["content"]))
                     self.budget.check()

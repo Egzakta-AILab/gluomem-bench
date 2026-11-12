@@ -8,6 +8,12 @@ Benchmark harness, offline Optuna retrieval tuner, ablation runner, and DSPy pro
 
 ## CLI
 
+Config-using commands require an explicit `dspy.model` registry selection via
+an external config, `--override dspy.model=<configured-entry>`, or
+`GLUOMEM_DSPY__MODEL`. The examples below assume that selection is configured;
+imports no longer choose a commercial model. Offline authored tests explicitly
+select `mock`. These examples do not grant permission for dataset/model calls.
+
 ```bash
 # Inspect runtime + benchmark component readiness
 uv run gluomem-bench components --json
@@ -55,3 +61,12 @@ remains a separate interface in `comparison_backends.py`.
 ```bash
 make check
 ```
+
+## Portable evaluation and opt-in instrumentation
+
+The explicit, offline [bounded evaluator](docs/BOUNDED_EVALUATION.md) checks
+source-bound authored answer/state/report contracts. It is separate from native
+benchmark scorers and adds no implicit aliases, models or execution authority.
+Versioned provider/pool, cost/accounting and optional local MLflow hooks are
+summarized with their limits in [publication status](docs/PUBLICATION_STATUS.md).
+Authored offline fixtures are not benchmark accuracy or real-model qualification.

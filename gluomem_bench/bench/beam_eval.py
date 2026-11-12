@@ -19,6 +19,7 @@ from gluomem_bench.bench.adapters.beam import CODE_REVISION, HF_REVISION, BeamAd
 from gluomem_bench.bench.baselines import Bm25Retriever, transcript
 from gluomem_bench.bench.rack import AnswerFormatError, RackClient
 from gluomem_bench.llm.outputs import AnswerResult
+from gluomem_bench.tracking import track_experiment
 
 if TYPE_CHECKING:
     from gluomem_bench.config import AppConfig
@@ -145,6 +146,7 @@ def rescore_beam(out: Path, *, check: bool = False) -> dict:
     return scores
 
 
+@track_experiment('beam', kind='condition')
 def run_beam(
     cfg: AppConfig,
     *,

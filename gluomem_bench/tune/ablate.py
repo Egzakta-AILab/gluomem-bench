@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gluomem_bench.tracking import track_experiment
 from gluomem_bench.tune.candidate_cache import CandidateCache
 from gluomem_bench.tune.rescore import ParamVector, evaluate_cache
 
@@ -98,6 +99,7 @@ def default_ablation_variants(base: ParamVector) -> list[AblationVariant]:
     ]
 
 
+@track_experiment('retrieval_ablation', kind='condition')
 def run_ablation(
     cache: CandidateCache,
     cfg: AppConfig,

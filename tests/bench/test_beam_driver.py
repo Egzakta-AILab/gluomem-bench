@@ -41,7 +41,8 @@ def test_clockless_selection_preserves_original_anchors_and_explicit_nonadmissio
             message.pop("time_anchor", None)
     receipt = api().selection_receipt(adapter)
     assert receipt["typed_ingestion_admitted"] is False
-    assert "no invented timestamp" in receipt["ingestion_blocker"]
+    assert receipt["ingestion_blocker"] == "Exception: operation_failed"
+    assert "no invented timestamp" not in json.dumps(receipt)
     assert receipt["projection_sha256"] is None
     assert receipt["questions"] == 20
     assert all(m["time_anchor"] is None for m in adapter.chat_messages())

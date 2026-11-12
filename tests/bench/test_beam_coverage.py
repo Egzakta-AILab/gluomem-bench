@@ -55,7 +55,9 @@ def test_missing_commit_result_is_not_certified_by_a_forged_row(
     assert failure["complete"] is False
     assert failure["persisted_event_rows"] == 1
     assert failure["seconds"] >= 0
-    assert "commit" in failure["error"]
+    assert failure["error"] == "production_source_event_failed"
+    assert failure["failure_diagnostic"]["stage"] == "commit-coverage"
+    assert "missing or incompatible source-event commit acknowledgement" not in json.dumps(failure)
 
 
 def test_redacted_committed_input_is_verified_without_restoring_plaintext(
@@ -251,5 +253,7 @@ def test_failure_receipt_survives_a_redacted_payload(tmp_path, mock_embedder, mo
     assert failure["retained_plaintext_messages"] == 0
     assert failure["redacted_events"] == 1
     assert failure["seconds"] >= 0
-    assert "bounded extractor" in failure["error"]
+    assert failure["error"] == "production_source_event_failed"
+    assert failure["failure_diagnostic"]["stage"] == "native-ingest"
+    assert "bounded extractor failure after commit" not in json.dumps(failure)
     assert not (stores / "beam-1.ingest.json").exists()

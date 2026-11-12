@@ -6,8 +6,8 @@ is per-conversation and HybridSearch has no conversation scoping, so one DB
 per conversation keeps retrieval uncontaminated and matches the "one user's
 memory" semantics of the published numbers.
 
-Context lines are date-prefixed (``[event_time or created_at] content``) —
-deliberate prompt signal for the temporal question category.
+Context uses production current-state recall: one JSON line per complete
+evidence group, retaining typed dependencies and trusted source/time metadata.
 
 Abstention: when the search abstains (or returns nothing) the retriever
 answers ``benchmark.answer.abstain_text`` WITHOUT an LLM call; usable LoCoMo
@@ -33,15 +33,17 @@ from gluomem_bench.bench.types import Prediction, RetrievedDoc, Sample
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from gluomem.client.models import MemoryFrameModel
     from gluomem.embedding.base import Embedder
     from gluomem.embedding.reranker import Reranker
     from gluomem.frames.store import Frame
+    from gluomem.frames.temporal import TemporalPolicy
 
     from gluomem_bench.bench.types import AnswerFn
     from gluomem_bench.config import AppConfig
 
 
-def _is_raw_turn(frame: Frame) -> bool:
+def _is_raw_turn(frame: Frame | MemoryFrameModel) -> bool:
     return ":session:" in frame.gop_id and frame.source == "import"
 
 
@@ -59,6 +61,8 @@ class GluoMemRetriever:
         content_to_dias: Mapping[str, tuple[str, ...]],
         embedder: Embedder | None = None,
         reranker: Reranker | None = None,
+        temporal_policy: TemporalPolicy | None = None,
+        as_of: str | None = None, known_at: str | None = None,
     ) -> None:
         self._cfg = cfg
         self._db_dir = Path(db_dir)
@@ -66,6 +70,8 @@ class GluoMemRetriever:
         self._content_to_dias = content_to_dias
         self._embedder = embedder
         self._reranker = reranker
+        self._temporal_policy = temporal_policy
+        self._as_of, self._known_at = as_of, known_at
         # ``None`` is a legitimate *resolved* reranker (rerank disabled), so a
         # plain None-check can't tell "not yet resolved" from "resolved to off".
         # An injected reranker (e.g. a test stub) is treated as already resolved
@@ -122,6 +128,7 @@ class GluoMemRetriever:
                 embedder=embedder,
                 reranker=self._resolve_reranker(),
                 kg=kg,
+                temporal_policy=self._temporal_policy,
             )
             self._stacks[conv_id] = stack
         return stack
@@ -129,10 +136,12 @@ class GluoMemRetriever:
     def answer(self, s: Sample) -> Prediction:
         start = time.perf_counter()
         with self._lock:
-            result = self._search_for(s.conv_id).search(
-                s.question, limit=self._cfg.benchmark.answer.context_k
+            result = self._search_for(s.conv_id).recall(
+                s.question, limit=self._cfg.benchmark.answer.context_k,
+                as_of=self._as_of, known_at=self._known_at
             )
-        decision = result.abstention.as_dict() if result.abstention else None
+        decision = {**result.abstention, "retrieval": result.retrieval.model_dump(),
+                    "refusals": [item.model_dump() for item in result.refusals]}
         if result.abstained or not result.hits:
             return Prediction(
                 sample_id=s.id,
@@ -143,8 +152,7 @@ class GluoMemRetriever:
             )
         evidence = set(s.evidence)
         docs: list[RetrievedDoc] = []
-        lines: list[str] = []
-        for hit in result.hits:
+        for rank, hit in enumerate(result.hits):
             frame = hit.frame
             dia_id: str | None = None
             if _is_raw_turn(frame):
@@ -156,15 +164,14 @@ class GluoMemRetriever:
                     dia_id = next((d for d in dias if d in evidence), dias[0])
             docs.append(
                 RetrievedDoc(
-                    rank=hit.rank,
+                    rank=rank,
                     text=frame.content,
                     score=hit.final,
                     dia_id=dia_id,
                     frame_id=frame.id,
                 )
             )
-            lines.append(f"[{frame.event_time or frame.created_at}] {frame.content}")
-        out = self._answer_fn(s.reader_question, "\n".join(lines))
+        out = self._answer_fn(s.reader_question, result.context)
         return Prediction(
             sample_id=s.id,
             answer=out.text,
@@ -185,6 +192,14 @@ class GluoMemRetriever:
         rerank = self._cfg.search.rerank
         return {
             "embedder": self._cfg.embedding.model,
+            "evidence_contract": {"surface": "HybridSearch.recall",
+                                  "view": ("historical" if self._as_of or self._known_at
+                                           else "current"),
+                                  "as_of": self._as_of, "known_at": self._known_at,
+                                  "history_authorized": bool(self._temporal_policy and
+                                                             self._temporal_policy.allow_historical),
+                                  "seed_limit": self._cfg.benchmark.answer.context_k,
+                                  "packing": "atomic JSON line per dependency group"},
             "rerank": {
                 "enabled": rerank.enabled,
                 "model": rerank.model,

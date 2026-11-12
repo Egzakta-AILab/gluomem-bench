@@ -226,7 +226,7 @@ def test_live_mem0_ingest_search_roundtrip(tmp_path: Path) -> None:
     pytest.importorskip("mem0", reason="uv sync --extra mem0 not installed")
     from gluomem_bench.llm.answer import Answerer
 
-    cfg = load_config().with_overrides(
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
         {
             "benchmark.datasets_dir": str(FIXTURE.parent),
             "benchmark.datasets.locomo.file": FIXTURE.name,

@@ -82,6 +82,8 @@ class CogneeRetrieverFactory:
     """Single-history factory for run_history; separate native subledger, SAME outer job."""
 
     def __init__(self, *, settings, profile, outer_budget, out, transport=None, documents=None):
+        from gluomem_bench.bench.rack_provider import refuse_unqualified_endpoint_comparator
+        refuse_unqualified_endpoint_comparator(profile)
         self.documents = tuple(documents) if documents is not None else None
         self.settings, self.profile = settings, profile
         self.outer_budget, self.out = outer_budget, Path(out)

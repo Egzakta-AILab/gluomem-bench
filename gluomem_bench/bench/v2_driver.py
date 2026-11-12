@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gluomem_bench.bench.error_privacy import safe_error, safe_kind
+from gluomem_bench.tracking import track_experiment
 
 PROTOCOL = "longmemeval-v2:native-input-text-history@v1"
 CODE_REVISION = "2cc8c540bdb87fe6761629b585e727e1c4704520"
@@ -149,6 +150,7 @@ def write_json(path, value):
     )
 
 
+@track_experiment('longmemeval_v2', kind='condition')
 def qualify_vision(profile, native_root, out, *, transport=None):
     """At most four authored calls/120s; exact native reader payload, no QA.
 
@@ -680,6 +682,7 @@ def _latch_group_failure(client, exc):
     client._latch(classified)
 
 
+@track_experiment('longmemeval_v2', kind='condition')
 def run_group(
     *,
     data,
@@ -970,6 +973,7 @@ def example_config():
     }
 
 
+@track_experiment('longmemeval_v2', kind='campaign')
 def execute(spec_path, approval_path, out):
     approval = json.loads(Path(approval_path).read_bytes())
     if (
@@ -1432,8 +1436,8 @@ def verify_root(out, *, _root_path=None):
         if leaf['usage'] != generation_usage(path, consumed_calls=leaf['usage']['generation_calls']):
             raise ValueError('leaf wire usage accounting differs')
         if leaf['status'] == 'complete' and job['method'] in {'mem0', 'cognee'}:
-            from gluomem_bench.bench.v2_memory_factories import verify_closed_native
             from gluomem_bench.bench.rack import RackProfile
+            from gluomem_bench.bench.v2_memory_factories import verify_closed_native
             verify_closed_native(path, method=job['method'],
                 documents=json.loads((path/'source-documents.json').read_bytes()),
                 source_proof=json.loads((path/'source-coverage.json').read_bytes()),

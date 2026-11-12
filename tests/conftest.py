@@ -22,7 +22,7 @@ os.environ.setdefault("DSPY_CACHEDIR", _dspy_cache)
 
 @pytest.fixture
 def cfg() -> AppConfig:
-    return load_config()
+    return load_config(overrides={"dspy.model": "mock"})
 
 
 @pytest.fixture

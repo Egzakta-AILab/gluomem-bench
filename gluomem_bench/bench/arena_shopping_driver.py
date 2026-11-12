@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 from gluomem_bench.bench.error_privacy import safe_error, safe_notes
+from gluomem_bench.tracking import track_experiment
 
 from . import arena_campaign as native
 from . import arena_driver as common
@@ -553,6 +554,7 @@ def method_metrics(matrix, source_bytes):
     return result
 
 
+@track_experiment('memoryarena_shopping', kind='condition')
 def run_task(row, *, runtime, client, memory, out, max_rounds):
     """Every ordered session, original local WebShop action loop and native memory.
 
@@ -1160,6 +1162,7 @@ class ShoppingPermit:
         return spec
 
 
+@track_experiment('memoryarena_shopping', kind='campaign')
 def execute_shopping(spec_path, approval_path):
     """Full Shopping execution only. Admission precedes all clients/writes."""
     spec = verify_spec(spec_path, approval_path)
@@ -1330,6 +1333,7 @@ def verify_root(out, *, payload=None, verifier=None, expected_matrix=None, expec
     return result
 
 
+@track_experiment('memoryarena_shopping', kind='campaign')
 def execute_matrix(
     tasks,
     *,
@@ -2819,6 +2823,7 @@ def _execute_shopping_continuation(spec, spec_path, approval_path, reserve_appro
     )
 
 
+@track_experiment('memoryarena_shopping', kind='campaign')
 def execute_continuation(spec_path, approval_path, reserve_approval_path):
     """Run only approved original NEVER-RUN tasks through native Shopping paths.
 

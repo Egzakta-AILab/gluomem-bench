@@ -16,6 +16,7 @@ from pathlib import Path
 from types import ModuleType
 
 from gluomem_bench.bench.error_privacy import safe_error
+from gluomem_bench.tracking import track_experiment
 
 from . import arena_campaign as native
 from .arena_runtime import release_context, reserve_context
@@ -325,6 +326,7 @@ def official_metrics(source, tasks, out):
     return json.loads((Path(out) / "all_results.json").read_bytes())
 
 
+@track_experiment('memoryarena_formal', kind='condition')
 def run_native_task(task, *, source, transport, memory, out, max_tool_iterations):
     """Real native MathAgent+MathEnvironment for both upstream formal configs.
 
@@ -572,6 +574,7 @@ class _OfflineIdentity:
         return None
 
 
+@track_experiment('memoryarena_formal', kind='campaign')
 def execute_matrix(
     tasks,
     *,
@@ -678,6 +681,7 @@ def execute_matrix(
     return result
 
 
+@track_experiment('memoryarena_formal', kind='condition')
 def qualify_authored_memory(*, native_root, out, profile, embedding_url):
     """One fixed authored task, real native loop + production memory, <=8/300s.
 
@@ -902,6 +906,7 @@ def verify_memory_qualification(binding, profile):
     return proof
 
 
+@track_experiment('memoryarena_formal', kind='campaign')
 def execute_formal(spec_path, approval_path):
     """Execute ALL frozen Math+Phys tasks/all sessions paired across methods.
 

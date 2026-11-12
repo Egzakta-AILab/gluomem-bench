@@ -17,7 +17,9 @@ from gluomem_bench.tune import build_cache_for_benchmark
 def test_benchmark_cache_anchors_recency_to_conversation_not_wall_clock(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = load_config().with_overrides({"embedding.model": "mock", "components.allow_fake": True})
+    cfg = load_config(overrides={"dspy.model": "mock"}).with_overrides(
+        {"embedding.model": "mock", "components.allow_fake": True}
+    )
     embedder = MockEmbedder(dim=cfg.storage.vector_dim)
     with MindDB(tmp_path / "c1.mind", dim=cfg.storage.vector_dim) as db:
         FrameStore(db, embedder=embedder).create_i_frame(
